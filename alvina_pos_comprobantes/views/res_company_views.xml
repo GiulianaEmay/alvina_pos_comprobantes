@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_company_form_alvina" model="ir.ui.view">
+        <field name="name">res.company.form.alvina</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="base.view_company_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//notebook" position="inside">
+                <page string="ALVIÑA POS" name="alvina_pos" groups="base.group_system">
+                    <group string="Procesamiento">
+                        <field name="alvina_emission_mode"/>
+                        <div class="alert alert-warning" colspan="2">
+                            Pendiente no ejecuta la facturación nocturna. Conecte y pruebe su adaptador.
+                            Procesado en Odoo no significa aceptado por SUNAT/OSE.
+                        </div>
+                    </group>
+                    <group string="JSON.PE — contrato configurable, validar antes de activar">
+                        <field name="alvina_jsonpe_enabled"/>
+                        <field name="alvina_jsonpe_dni_url" placeholder="URL oficial de su contrato DNI"/>
+                        <field name="alvina_jsonpe_ruc_url" placeholder="URL oficial de su contrato RUC"/>
+                        <field name="alvina_jsonpe_method"/>
+                        <field name="alvina_jsonpe_parameter"/>
+                        <field name="alvina_jsonpe_number_path" placeholder="Ruta JSON del documento devuelto"/>
+                        <field name="alvina_jsonpe_name_path" placeholder="Ruta JSON del nombre completo normalizado"/>
+                        <field name="alvina_jsonpe_street_path" placeholder="Ruta JSON de dirección fiscal"/>
+                        <field name="alvina_jsonpe_auth_header"/>
+                        <field name="alvina_jsonpe_auth_prefix"/>
+                        <field name="alvina_jsonpe_token" password="True"/>
+                        <div class="text-muted" colspan="2">
+                            Preferir ALVINA_JSONPE_TOKEN en el entorno del servidor. El campo de respaldo
+                            se almacena en la base de datos; no se exporta al POS. Proteger copias de seguridad.
+                            Si DNI y RUC usan esquemas distintos, implementar el adaptador documentado.
+                        </div>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

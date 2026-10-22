@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="request_company_rule" model="ir.rule">
+        <field name="name">ALVIÑA: compañías permitidas</field>
+        <field name="model_id" ref="model_alvina_pos_document_request"/>
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="request_cashier_rule" model="ir.rule">
+        <field name="name">ALVIÑA: sesión del responsable</field>
+        <field name="model_id" ref="model_alvina_pos_document_request"/>
+        <field name="groups" eval="[(4, ref('point_of_sale.group_pos_user'))]"/>
+        <field name="domain_force">[('order_id.session_id.user_id', '=', user.id)]</field>
+    </record>
+    <record id="request_manager_rule" model="ir.rule">
+        <field name="name">ALVIÑA: administrador POS</field>
+        <field name="model_id" ref="model_alvina_pos_document_request"/>
+        <field name="groups" eval="[(4, ref('point_of_sale.group_pos_manager'))]"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+    </record>
+    <!-- Identity previews have no ACL: only guarded order RPCs access them with sudo. -->
+</odoo>

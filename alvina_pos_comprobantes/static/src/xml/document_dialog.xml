@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="alvina_pos_comprobantes.DocumentDialog">
+        <Dialog title="'Boleta / Factura'">
+            <div class="d-flex flex-column gap-3" t-att-aria-busy="state.busy ? 'true' : 'false'">
+                <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
+                <t t-if="!locked">
+                    <label for="alvina-kind">Tipo de comprobante</label>
+                    <select id="alvina-kind" class="form-select" t-model="state.kind" t-on-change="invalidatePreview" t-att-disabled="state.busy">
+                        <option value="boleta">Boleta (03)</option>
+                        <option value="factura">Factura (01)</option>
+                    </select>
+                    <label for="alvina-number" t-esc="state.kind === 'boleta' ? 'DNI (8 dígitos)' : 'RUC (11 dígitos)'"/>
+                    <input id="alvina-number" class="form-control" inputmode="numeric" autocomplete="off" t-model="state.number" t-on-input="invalidatePreview" t-att-maxlength="state.kind === 'boleta' ? 8 : 11" t-att-disabled="state.busy"/>
+                    <button class="btn btn-secondary" t-on-click="lookup" t-att-disabled="state.busy || !validNumber">Consultar cliente</button>
+                    <div t-if="state.preview" class="alert alert-info" aria-live="polite">
+                        <strong t-esc="state.preview.name"/>
+                        <div t-esc="state.preview.number"/>
+                        <div t-esc="state.preview.street"/>
+                    </div>
+                </t>
+                <div t-elif="state.status" class="alert alert-info" aria-live="polite">
+                    <strong t-esc="state.status.customer_name"/>
+                    <div t-if="state.status.state === 'pending'">Estado: pendiente</div>
+                    <div t-if="state.status.state === 'processed'">Estado: procesado en Odoo</div>
+                    <div t-if="state.status.state === 'failed'">Estado: fallido</div>
+                    <div t-esc="state.status.message"/>
+                    <div t-esc="state.status.invoice_name"/>
+                </div>
+                <div t-if="state.busy" role="status">Procesando…</div>
+            </div>
+            <t t-set-slot="footer">
+                <button class="btn btn-secondary" t-on-click="props.close" t-att-disabled="state.busy"><t t-if="locked">Cerrar</t><t t-else="">Cancelar</t></button>
+                <button t-if="!locked" class="btn btn-primary" t-on-click="confirm" t-att-disabled="state.busy || !state.preview">Confirmar y emitir</button>
+                <button t-if="locked" class="btn btn-secondary" t-on-click="() => this.run(() => this.refresh())" t-att-disabled="state.busy">Actualizar estado</button>
+                <button t-if="state.status?.state === 'failed'" class="btn btn-warning" t-on-click="retry" t-att-disabled="state.busy">Reintentar (administrador POS)</button>
+                <button t-if="state.status?.can_print" class="btn btn-primary" t-on-click="printDocument" t-att-disabled="state.busy">Imprimir comprobante</button>
+            </t>
+        </Dialog>
+    </t>
+</templates>
