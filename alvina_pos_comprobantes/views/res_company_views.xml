@@ -14,10 +14,19 @@
                             Procesado en Odoo no significa aceptado por SUNAT/OSE.
                         </div>
                     </group>
-                    <group string="JSON.PE — contrato configurable, validar antes de activar">
+                    <group string="Consulta de clientes con JSON.PE">
                         <field name="alvina_jsonpe_enabled"/>
-                        <field name="alvina_jsonpe_dni_url" placeholder="URL oficial de su contrato DNI"/>
-                        <field name="alvina_jsonpe_ruc_url" placeholder="URL oficial de su contrato RUC"/>
+                        <field name="alvina_jsonpe_profile"/>
+                        <field name="alvina_jsonpe_token" password="True"/>
+                        <div class="text-muted" colspan="2">
+                            En el perfil JSON.PE solo necesita el token y activar las consultas.
+                            DNI y RUC utilizan automáticamente sus parámetros y respuestas documentados.
+                            Guarde la configuración antes de probar desde el POS.
+                        </div>
+                    </group>
+                    <group string="Configuración avanzada" invisible="alvina_jsonpe_profile != 'custom'">
+                        <field name="alvina_jsonpe_dni_url" placeholder="https://api.json.pe/api/dni"/>
+                        <field name="alvina_jsonpe_ruc_url" placeholder="https://api.json.pe/api/ruc"/>
                         <field name="alvina_jsonpe_method"/>
                         <field name="alvina_jsonpe_parameter"/>
                         <field name="alvina_jsonpe_number_path" placeholder="Ruta JSON del documento devuelto"/>
@@ -25,11 +34,12 @@
                         <field name="alvina_jsonpe_street_path" placeholder="Ruta JSON de dirección fiscal"/>
                         <field name="alvina_jsonpe_auth_header"/>
                         <field name="alvina_jsonpe_auth_prefix"/>
-                        <field name="alvina_jsonpe_token" password="True"/>
+                    </group>
+                    <group>
                         <div class="text-muted" colspan="2">
                             Preferir ALVINA_JSONPE_TOKEN en el entorno del servidor. El campo de respaldo
                             se almacena en la base de datos; no se exporta al POS. Proteger copias de seguridad.
-                            Si DNI y RUC usan esquemas distintos, implementar el adaptador documentado.
+                            La consulta de identidad no emite comprobantes ni confirma aceptación SUNAT.
                         </div>
                     </group>
                 </page>

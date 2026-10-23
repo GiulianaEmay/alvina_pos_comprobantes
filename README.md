@@ -38,9 +38,9 @@ El código y su estructura están preparados para instalar y validar en una base
 
 Pendiente de conectar y probar con ALVIÑA:
 
-- Contrato real de JSON.PE: rutas, autenticación, campos y normalización por tipo.
-  No se pudieron consultar sus sitios de documentación desde este entorno (HTTP
-  403 del proxy). **No se inventa ni se considera validado su contrato HTTP.**
+- Prueba de conexión real a JSON.PE desde el servidor de Odoo, con credenciales
+  configuradas por el administrador. El contrato DNI/RUC ya está implementado
+  según los dos documentos OpenAPI suministrados; no se ha consumido la API real.
 - Localización electrónica/EDI efectivamente usada, certificados, OSE/SUNAT,
   diarios y series de ALVIÑA. `l10n_pe` aporta la base contable peruana; por sí
   solo este addon **no implementa el envío electrónico ni acredita aceptación SUNAT**.
@@ -118,48 +118,61 @@ directa. Solo un administrador POS puede autorizar un reintento fallido.
 
 ## Configurar JSON.PE sin exponer claves
 
-El transporte genérico solo acepta HTTPS a `json.pe` o subdominios, puerto 443,
-sin credenciales, query string ni redirecciones. Conserva verificación TLS,
-timeouts de conexión/lectura y límite de respuesta de 64 KiB. No registra el cuerpo
-de respuesta ni claves. Debe permitir en la red del servidor el **hostname real**
-del contrato. No hace llamadas externas si existe un contacto local válido.
+**Versión 19.0.1.1.0:** incorpora el contrato documentado para DNI y RUC. Después
+de que el partner descargue este código al servidor, reinicie Odoo y **actualice
+el módulo** desde Aplicaciones. Reiniciar sin actualizar no crea el nuevo campo
+de perfil ni actualiza la vista de configuración.
 
-Configure con la documentación real de su cuenta, manteniendo desactivada la
-integración hasta contrastarla:
+1. Abra **Ajustes → Usuarios y compañías → Compañías → su compañía → ALVIÑA POS**.
+2. Mantenga el perfil **JSON.PE — DNI y RUC** (predeterminado también al actualizar).
+3. Introduzca el **Token de JSON.PE** sin la palabra `Bearer` y marque
+   **Activar consultas JSON.PE**. Guarde y recargue el POS.
+4. Pruebe con un cliente autorizado que no exista en Contactos, ya que un contacto
+   local válido se reutiliza sin llamar a JSON.PE. Revise los datos antes de confirmar.
 
-| Campo | Contrato del transporte disponible |
-| --- | --- |
-| URL DNI / URL RUC | Endpoint completo, sin query string; no hay rutas inventadas predeterminadas |
-| Método | `GET` con parámetros o `POST` con cuerpo JSON |
-| Parámetro | Nombre de la clave que contiene el documento; el valor inicial es ilustrativo y debe validarse |
-| Ruta número | Ruta con puntos a un **texto** idéntico al documento consultado |
-| Ruta nombre | Ruta con puntos al nombre completo/razón social ya normalizado |
-| Ruta dirección | Ruta con puntos a `street`; necesaria para crear cliente de factura |
-| Cabecera/prefijo | Configurables; `Authorization` / `Bearer` son valores iniciales del transporte, no un contrato verificado |
-| Token | Preferir variable de entorno del servidor `ALVINA_JSONPE_TOKEN`; alternativa: campo restringido de compañía |
+En este perfil **no es necesario completar URL, parámetro ni rutas JSON**. La
+configuración avanzada anterior se conserva para uso personalizado pero no se
+utiliza en el perfil oficial. No se sobrescribe el token que ya estuviera guardado
+ni se activa automáticamente el proveedor al actualizar.
 
-La variable de entorno tiene prioridad y se comparte entre compañías del proceso;
-si necesita credenciales distintas, utilice el campo por compañía o un gestor de
-secretos en un adaptador. El campo restringido **no cifra el valor en la base de
-datos**: limite acceso administrativo y proteja respaldos. No exportar claves a
-configuración del POS ni añadirlas al repositorio. No introducirlas en el chat.
+| Consulta | URL y cuerpo JSON de POST | Número devuelto | Nombre |
+| --- | --- | --- | --- |
+| DNI / boleta | `https://api.json.pe/api/dni`, `{"dni": "DOCUMENTO_DE_8_DIGITOS"}` | `data.numero` | `data.nombre_completo` |
+| RUC / factura | `https://api.json.pe/api/ruc`, `{"ruc": "DOCUMENTO_DE_11_DIGITOS"}` | `data.ruc` | `data.nombre_o_razon_social` |
 
-Si DNI/RUC usan estructuras distintas, nombres divididos en varios campos,
-otra autenticación, u otro proveedor, herede el punto propio:
+Ambas consultas envían `Authorization: Bearer <token>` exclusivamente desde el
+backend. Deben responder HTTP 200 y `success: true` (booleano), con el número de
+documento coincidente. El nombre no puede estar vacío. Se usa `direccion_completa`
+y, si falta o está vacía, `direccion`. DNI permite dirección ausente; factura exige
+dirección fiscal. La identidad devuelta no sustituye los controles fiscales de
+Odoo ni certifica por sí misma que una empresa esté habilitada para emitir.
 
-```python
-class ResCompany(models.Model):
-    _inherit = "res.company"
+La documentación utilizada son los textos OpenAPI **DNI — POST /dni** y
+**RUC — POST /ruc** proporcionados por el usuario, cuyo índice es
+[docs.json.pe/llms.txt](https://docs.json.pe/llms.txt). No se han guardado respuestas
+reales de personas ni se ha usado el token compartido en el chat para las pruebas.
+Las pruebas offline contienen datos ficticios y documentos de referencia públicos.
 
-    def _alvina_lookup_external(self, kind, number):
-        # Implementar aquí el contrato real verificado en backend.
-        # Validar número devuelto == number, estado y campos requeridos.
-        # No aceptar nombres o claves provenientes del navegador.
-        # Devolver: {"name": texto_no_vacío, "street": dirección_o_texto_vacío}
-        return super()._alvina_lookup_external(kind, number)
-```
+El servidor debe permitir HTTPS a **api.json.pe**. El transporte conserva TLS,
+timeouts de conexión/lectura, límite de respuesta de 64 KiB y rechazo de
+redirecciones. No registra el cuerpo de respuesta ni las claves. Los errores HTTP,
+credenciales inválidas, respuestas malformadas, `success: false` o número distinto
+bloquean la consulta y no crean un cliente o solicitud a partir de esa respuesta.
 
-El ejemplo solo muestra la firma de extensión, no una implementación de JSON.PE.
+Como alternativa al campo de Odoo, puede usar `ALVINA_JSONPE_TOKEN` en el entorno
+del servidor. Tiene prioridad y se comparte entre compañías del proceso; para
+credenciales distintas use el campo por compañía o un gestor de secretos en un
+adaptador. El campo está restringido a administradores y **no cifra el valor en la
+base de datos**: limite acceso administrativo y proteja respaldos. No exportar claves
+al POS ni añadirlas al repositorio. No introducirlas en el chat.
+
+El perfil **Personalizado (avanzado)** conserva las opciones anteriores (GET/POST,
+URL, parámetro, rutas y cabecera), con mapeo compartido entre DNI/RUC. Para JSON.PE
+use el perfil oficial, que diferencia ambos esquemas. Para contratos adicionales
+puede heredar el método backend `_alvina_lookup_external(self, kind, number)` y
+devolver `{"name": texto_no_vacío, "street": dirección_o_texto_vacío}`. Nunca aceptar
+nombres o credenciales provenientes del navegador. Esta extensión no altera el
+contrato del proceso nocturno.
 
 ## Contrato de integración nocturna (pendiente)
 
@@ -212,11 +225,12 @@ Comandos ejecutables sin Odoo, desde la raíz del repositorio:
 
 ```bash
 python tools/test_identity.py -v
+python tools/test_jsonpe.py -v
 python tools/check_addon.py
 python -m compileall -q alvina_pos_comprobantes tools
 ```
 
-Resultados en este entorno: **10 pruebas unitarias puras aprobadas**. Se verificó
+Resultados en este entorno: **24 pruebas unitarias puras aprobadas** (10 de identidad y 14 del contrato JSON.PE). Se verificó
 sintaxis Python, XML y JavaScript con Node, archivos de datos/assets declarados y
 dependencias del manifiesto. No se importó el addon en un registro ORM real.
 
@@ -233,7 +247,9 @@ sus dependencias, ejecute por ejemplo:
 `alvina_pos_comprobantes/tests/` cubre contacto local sin proveedor, doble solicitud,
 vista previa de otro pedido/vencida, documento inválido, permisos y ACL, estados
 fallidos, bloqueo de impresión pendiente, preparación de tipos 03/01 y rollback
-ante una falla inyectada de facturación. Estas pruebas usan fixtures oficiales
+ante una falla inyectada de facturación. Se incluye una suite de transporte JSON.PE
+con HTTP simulado (DNI/RUC, Bearer, timeouts, fallo del proveedor y límite de respuesta),
+también pendiente de ejecutar en Odoo. Estas pruebas usan fixtures oficiales
 POS y mocks explícitos para fallos; **no acreditan emisión real ni integración EDI**.
 
 Validación de staging aún necesaria: instalación limpia y actualización; render
