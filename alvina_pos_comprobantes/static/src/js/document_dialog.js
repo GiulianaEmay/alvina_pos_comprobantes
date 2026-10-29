@@ -43,7 +43,7 @@ export class AlvinaDocumentDialog extends Component {
     async refresh() {
         this.state.status = await this.rpc("alvina_document_status");
         this.state.ready = true;
-        if (["pending", "processed", "failed"].includes(this.state.status.state)) {
+        if (this.state.status.state !== "none") {
             await this.reloadOrder();
         }
     }
@@ -85,6 +85,7 @@ export class AlvinaDocumentDialog extends Component {
             this.state.status = await this.rpc("alvina_submit_document", [preview.identity_id]);
             this.state.preview = null;
             await this.reloadOrder();
+            await this.sendAndPrint();
         });
     }
 
@@ -95,9 +96,34 @@ export class AlvinaDocumentDialog extends Component {
         });
     }
 
+    async sendAndPrint() {
+        if (this.state.status?.can_send) {
+            this.state.status = await this.rpc("alvina_send_document");
+        }
+        if (this.state.status?.can_print) {
+            const action = await this.rpc("alvina_print_document");
+            await this.action.doAction(action);
+        }
+    }
+
+    issueNow() {
+        return this.run(() => this.sendAndPrint());
+    }
+
+    retryEdi() {
+        return this.run(async () => {
+            this.state.status = await this.rpc("alvina_retry_edi");
+            if (this.state.status.can_print) {
+                const action = await this.rpc("alvina_print_document");
+                await this.action.doAction(action);
+            }
+        });
+    }
+
     retry() {
         return this.run(async () => {
             this.state.status = await this.rpc("alvina_retry_document");
+            await this.sendAndPrint();
         });
     }
 }

@@ -4,6 +4,7 @@ from psycopg2 import OperationalError
 
 from odoo import fields, models, _
 from odoo.exceptions import UserError
+from odoo.tools import html2plaintext
 
 from .identity import validate_identity
 
@@ -15,12 +16,14 @@ class AlvinaPosIdentity(models.TransientModel):
     _description = "Consulta temporal de identidad ALVIÑA"
     _transient_max_hours = 1
 
-    order_id = fields.Many2one("pos.order", required=True, ondelete="cascade")
+    order_id = fields.Many2one("pos.order", ondelete="cascade")
+    session_id = fields.Many2one("pos.session", ondelete="cascade")
     requested_by = fields.Many2one("res.users", required=True)
     kind = fields.Selection([("boleta", "Boleta"), ("factura", "Factura")], required=True)
     number = fields.Char(required=True)
     name = fields.Char(required=True)
     street = fields.Char()
+    ubigeo = fields.Char()
     partner_id = fields.Many2one("res.partner", ondelete="set null")
 
 
@@ -43,7 +46,10 @@ class AlvinaPosDocumentRequest(models.Model):
         required=True, default="pending", index=True,
     )
     invoice_id = fields.Many2one("account.move", readonly=True, ondelete="restrict")
+    edi_format_id = fields.Many2one("account.edi.format", ondelete="restrict", readonly=True)
     attempts = fields.Integer(readonly=True)
+    send_attempts = fields.Integer(readonly=True)
+    send_uncertain = fields.Boolean(readonly=True)
     processed_at = fields.Datetime(readonly=True)
     error_message = fields.Text(readonly=True)
 
@@ -95,11 +101,11 @@ class AlvinaPosDocumentRequest(models.Model):
             raise UserError(_("El comprobante existente no coincide con la solicitud. Revisión manual necesaria."))
 
     def _process_pending(self):
-        """Private batch integration hook. Same transaction and lock as POS issuance.
+        """First RPC: post/reconcile the original order before any EDI web call.
 
-        Trusted adapter must call this on each pending request (prefer one job/transaction
-        per order); never create another sale/payment/invoice in the adapter.
-        Processed means posted in Odoo, never acceptance by SUNAT/OSE.
+        Kept under its original name for compatibility. The POS immediately follows
+        with alvina_send_document in a SECOND RPC, after this invoice has committed.
+        A provider timeout must never roll back the invoice and allocate a new number.
         """
         self.ensure_one()
         self.order_id._alvina_lock()
@@ -111,8 +117,12 @@ class AlvinaPosDocumentRequest(models.Model):
             with self.env.cr.savepoint():
                 self._validate_for_invoice()
                 order = self.order_id.with_company(self.company_id)
+                if not self.edi_format_id:
+                    self.edi_format_id = self.company_id._alvina_get_edi_format(order.config_id.invoice_journal_id)
                 if not order.account_move:
-                    order.with_context(generate_pdf=False).action_pos_order_invoice()
+                    order.with_context(
+                        generate_pdf=False, skip_account_edi_cron_trigger=True,
+                    ).action_pos_order_invoice()
                 self._validate_existing_invoice(order.account_move)
                 self.write({"state": "processed", "invoice_id": order.account_move.id,
                             "processed_at": fields.Datetime.now(), "error_message": False})
@@ -127,14 +137,79 @@ class AlvinaPosDocumentRequest(models.Model):
             self.write({"state": "failed", "error_message": _("Error interno. Consulte el registro del servidor.")})
         return self._status_payload()
 
+    def _edi_document(self):
+        self.ensure_one()
+        invoice = self.order_id.account_move
+        if not invoice or invoice != self.invoice_id or invoice.state != "posted":
+            return self.env["account.edi.document"]
+        return invoice.edi_document_ids.filtered(lambda doc: doc.edi_format_id == self.edi_format_id)
+
+    def _send_now(self, retry=False):
+        """Second RPC: send this invoice's registered EDI document synchronously."""
+        self.ensure_one()
+        self.order_id._alvina_lock()
+        self.invalidate_recordset()
+        documents = self._edi_document()
+        if len(documents) != 1:
+            raise UserError(_("El comprobante no tiene un documento electrónico compatible. Revíselo en Contabilidad."))
+        if documents.state == "sent":
+            return self._status_payload()
+        if documents.state != "to_send":
+            raise UserError(_("El comprobante está anulado o en proceso de anulación. No se volverá a emitir."))
+        if self.send_uncertain:
+            raise UserError(_(
+                "El resultado del envío anterior no está confirmado. Verifique ese mismo "
+                "número en Contabilidad/SUNAT antes de autorizar otro envío. No cree otro comprobante."
+            ))
+        if documents.error and not retry:
+            return self._status_payload()
+        if retry:
+            # Official retry reset; never delete/recreate the fiscal document.
+            self.invoice_id._retry_edi_documents_error()
+        self.send_attempts += 1
+        self.error_message = False
+        try:
+            with self.env.cr.savepoint():
+                # Verified Odoo 19 API. Restrict processing to the selected format
+                # and do not allow it to commit unrelated work.
+                documents._process_documents_web_services(with_commit=False)
+        except OperationalError:
+            raise
+        except Exception:
+            _logger.error("ALVIÑA: unconfirmed EDI result for request id=%s", self.id)
+            self.write({"send_uncertain": True, "error_message": _(
+                "No se confirmó la respuesta del proveedor electrónico. El comprobante conserva "
+                "su número; actualice el estado o revíselo en Contabilidad antes de reenviar."
+            )})
+        return self._status_payload()
+
     def _status_payload(self):
         self.ensure_one()
         invoice = self.order_id.account_move
-        can_print = (self.state == "processed" and invoice == self.invoice_id and invoice.state == "posted")
+        documents = self._edi_document()
+        state = self.state
+        message = self.error_message or _("El comprobante todavía no está preparado.")
+        can_send = False
+        if self.state == "processed":
+            if len(documents) != 1:
+                state, message = "edi_error", _("Falta el documento electrónico del proveedor. Revise el comprobante en Contabilidad.")
+            elif documents.state in ("cancelled", "to_cancel"):
+                state, message = "cancelled", _("Comprobante anulado o pendiente de anulación.")
+            elif documents.state == "sent" and not documents.error:
+                state, message = "sent", _("Comprobante electrónico enviado según el estado del proveedor registrado en Odoo.")
+            elif self.send_uncertain:
+                state = "unknown"
+            elif documents.error:
+                state, message = "edi_error", html2plaintext(documents.error)[:2000]
+            else:
+                state, message = "to_send", _("Comprobante preparado. Pendiente de respuesta del proveedor electrónico.")
+                can_send = True
+        can_print = state == "sent"
         return {
-            "state": self.state, "kind": self.kind, "number": self.number,
+            "state": state, "kind": self.kind, "number": self.number,
             "customer_name": self.partner_id.name, "invoice_name": invoice.name if invoice else "",
-            "message": self.error_message or ("Pendiente de procesamiento. No emitido aún." if self.state == "pending"
-                                              else "Procesado en Odoo; verifique el estado EDI/SUNAT."),
+            "message": message, "can_send": can_send,
+            "can_prepare": not invoice and self.state in ("pending", "failed"),
+            "can_retry_edi": state == "edi_error" and bool(documents) and documents.state == "to_send",
             "can_print": bool(can_print),
         }

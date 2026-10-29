@@ -15,7 +15,7 @@ class TestAlvinaDocumentRequest(CommonPosTest):
         super().setUpClass()
         cls.company.country_id = cls.env.ref("base.pe")
         cls.company.account_fiscal_country_id = cls.env.ref("base.pe")
-        cls.company.alvina_emission_mode = "pending"
+        cls.edi_format = cls.env["account.edi.format"].create({"name": "EDI de prueba ALVIÑA", "code": "alvina_test_edi"})
         cls.config = cls.pos_config_usd
         cls.session = cls.env["pos.session"].create({"config_id": cls.config.id, "user_id": cls.env.uid})
         cls.dni_partner = cls.env["res.partner"].create({
@@ -23,6 +23,16 @@ class TestAlvinaDocumentRequest(CommonPosTest):
             "l10n_latam_identification_type_id": cls.env.ref("l10n_pe.it_DNI").id,
         })
         cls.cashier = new_test_user(cls.env, login="alvina_cashier_test", groups="point_of_sale.group_pos_user")
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch.object(type(self.company), "_alvina_get_edi_format", return_value=self.edi_format)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def submit_unposted(self, order, preview=None):
+        with patch.object(type(self.env["alvina.pos.document.request"]), "_process_pending", lambda req: req._status_payload()):
+            return order.alvina_submit_document(preview or self.preview(order))
 
     def make_order(self):
         fiscal = self.env["account.fiscal.position"].with_company(self.company)._get_fiscal_position(self.dni_partner)
@@ -47,8 +57,8 @@ class TestAlvinaDocumentRequest(CommonPosTest):
         preview = self.preview(order)
         before_orders = self.env["pos.order"].search_count([])
         before_payments = self.env["pos.payment"].search_count([])
-        first = order.alvina_submit_document(preview)
-        second = order.alvina_submit_document(preview)
+        first = self.submit_unposted(order, preview)
+        second = self.submit_unposted(order, preview)
         self.assertEqual(first, second)
         self.assertEqual(first["state"], "pending")
         self.assertEqual(order.partner_id, self.dni_partner)
@@ -66,8 +76,11 @@ class TestAlvinaDocumentRequest(CommonPosTest):
     def test_expired_preview(self):
         from datetime import timedelta
         order = self.make_order()
-        preview = self.env["alvina.pos.identity"].browse(self.preview(order))
-        preview.create_date = fields.Datetime.now() - timedelta(hours=2)
+        preview = self.env["alvina.pos.identity"].sudo().browse(self.preview(order))
+        preview.flush_recordset()
+        self.env.cr.execute("UPDATE alvina_pos_identity SET create_date = %s WHERE id = %s",
+                            [fields.Datetime.now() - timedelta(hours=2), preview.id])
+        preview.invalidate_recordset(["create_date"])
         with self.assertRaises(UserError):
             order.alvina_submit_document(preview.id)
 
@@ -82,14 +95,14 @@ class TestAlvinaDocumentRequest(CommonPosTest):
 
     def test_request_is_not_writable_by_cashier(self):
         order = self.make_order()
-        order.alvina_submit_document(self.preview(order))
+        self.submit_unposted(order)
         request = order._alvina_request()
         with self.assertRaises(AccessError):
             request.with_user(self.cashier).write({"state": "processed"})
 
     def test_processing_failure_is_persistent_and_not_retried_silently(self):
         order = self.make_order()
-        order.alvina_submit_document(self.preview(order))
+        self.submit_unposted(order)
         request = order._alvina_request()
         with patch.object(type(request), "_validate_for_invoice", side_effect=UserError("Diario de prueba inválido")):
             request._process_pending()
@@ -102,14 +115,14 @@ class TestAlvinaDocumentRequest(CommonPosTest):
 
     def test_pending_cannot_print(self):
         order = self.make_order()
-        order.alvina_submit_document(self.preview(order))
+        self.submit_unposted(order)
         with self.assertRaises(UserError):
             order.alvina_print_document()
 
     def test_official_invoice_values_use_type_03(self):
         order = self.make_order()
         order.config_id.invoice_journal_id.l10n_latam_use_documents = True
-        order.alvina_submit_document(self.preview(order))
+        self.submit_unposted(order)
         values = order._prepare_invoice_vals()
         self.assertEqual(values["l10n_latam_document_type_id"], self.env.ref("l10n_pe.document_type02").id)
         self.assertEqual(values["journal_id"], order.config_id.invoice_journal_id.id)
@@ -124,13 +137,13 @@ class TestAlvinaDocumentRequest(CommonPosTest):
             "l10n_latam_identification_type_id": self.env.ref("l10n_pe.it_RUC").id,
         })
         preview = order.alvina_lookup_identity("factura", "20100070970")["identity_id"]
-        order.alvina_submit_document(preview)
+        self.submit_unposted(order, preview)
         values = order._prepare_invoice_vals()
         self.assertEqual(values["l10n_latam_document_type_id"], self.env.ref("l10n_pe.document_type01").id)
 
     def test_failed_invoice_attempt_rolls_back_its_changes(self):
         order = self.make_order()
-        order.alvina_submit_document(self.preview(order))
+        self.submit_unposted(order)
         request = order._alvina_request()
         before_name = order.name
 
@@ -144,3 +157,30 @@ class TestAlvinaDocumentRequest(CommonPosTest):
         self.assertEqual(order.name, before_name)
         self.assertFalse(order.account_move)
         self.assertEqual(request.state, "failed")
+
+    def test_quick_customer_is_internal_and_reused(self):
+        self.session.state = "opened"
+        with patch.object(type(self.company), "_alvina_lookup_external", return_value={"name": "IDENTIDAD FISCAL", "street": ""}):
+            preview = self.session.alvina_lookup_customer("boleta", "87654321")
+        result = self.session.alvina_confirm_customer(preview["identity_id"])
+        partner = self.env["res.partner"].browse(result["partner_id"])
+        self.assertFalse(partner.active)
+        self.assertTrue(partner.alvina_pos_fiscal_identity)
+        self.assertFalse(self.env["res.partner"].search([("vat", "=", "87654321")]))
+        again = self.session.alvina_lookup_customer("boleta", "87654321")
+        self.assertEqual(self.session.alvina_confirm_customer(again["identity_id"])["partner_id"], partner.id)
+
+    def test_existing_contact_not_archived_or_duplicated(self):
+        self.session.state = "opened"
+        before = self.env["res.partner"].with_context(active_test=False).search_count([])
+        preview = self.session.alvina_lookup_customer("boleta", self.dni_partner.vat)
+        result = self.session.alvina_confirm_customer(preview["identity_id"])
+        self.assertEqual(result["partner_id"], self.dni_partner.id)
+        self.assertTrue(self.dni_partner.active)
+        self.assertEqual(self.env["res.partner"].with_context(active_test=False).search_count([]), before)
+
+    def test_kind_selected_before_payment_reaches_official_invoice(self):
+        order = self.make_order()
+        order.write({"partner_id": self.dni_partner.id, "alvina_document_kind": "boleta"})
+        values = order._prepare_invoice_vals()
+        self.assertEqual(values["l10n_latam_document_type_id"], self.env.ref("l10n_pe.document_type02").id)

@@ -9,14 +9,21 @@ from odoo.exceptions import UserError
 
 from .identity import json_path
 from .jsonpe import parse_response, request_spec
+from .identity import validate_identity
 
 
 class ResCompany(models.Model):
     _inherit = "res.company"
 
     alvina_emission_mode = fields.Selection(
-        [("pending", "Pendiente: integración nocturna"), ("immediate", "Procesar con Odoo")],
-        default="pending", required=True, groups="base.group_system", string="Modo de procesamiento",
+        [("pending", "Valor anterior (sin uso en el POS)"), ("immediate", "Emisión inmediata")],
+        default="immediate", required=True, groups="base.group_system", string="Modo anterior",
+    )
+    # Retained for database compatibility. Interactive issuance always runs now.
+    alvina_edi_format_id = fields.Many2one(
+        "account.edi.format", string="Formato electrónico SUNAT/OSE", groups="base.group_system",
+        help="Opcional si se detecta el formato de l10n_pe_edi en el diario del POS. "
+             "Para otro proveedor, seleccione su formato electrónico peruano ya configurado.",
     )
     alvina_jsonpe_enabled = fields.Boolean(string="Activar consultas JSON.PE", groups="base.group_system")
     alvina_jsonpe_profile = fields.Selection(
@@ -36,6 +43,62 @@ class ResCompany(models.Model):
     alvina_jsonpe_auth_header = fields.Char(default="Authorization", groups="base.group_system")
     alvina_jsonpe_auth_prefix = fields.Char(default="Bearer", groups="base.group_system")
     alvina_jsonpe_token = fields.Char(string="Token de JSON.PE", copy=False, groups="base.group_system")
+
+    def _alvina_get_edi_format(self, journal):
+        """Use registered EDI formats, never assume a private localization method."""
+        self.ensure_one()
+        formats = journal.edi_format_ids.filtered(lambda fmt: fmt._needs_web_services())
+        selected = self.alvina_edi_format_id
+        if not selected:
+            external_ids = formats.get_external_id()
+            selected = formats.filtered(
+                lambda fmt: external_ids.get(fmt.id, "").startswith("l10n_pe_edi.")
+            )
+        if len(selected) != 1 or selected not in formats:
+            raise UserError(_(
+                "El diario de facturación del POS necesita un formato electrónico peruano "
+                "SUNAT/OSE configurado. Configure la facturación electrónica en Odoo y, "
+                "si usa otro proveedor, seleccione su formato en Compañías → ALVIÑA POS."
+            ))
+        return selected
+
+    def _alvina_partner(self, kind, number):
+        self.ensure_one()
+        identification = self.env.ref("l10n_pe.it_DNI" if kind == "boleta" else "l10n_pe.it_RUC")
+        partners = self.env["res.partner"].sudo().with_context(active_test=False).search([
+            ("vat", "=", number), ("company_id", "in", [False, self.id]),
+        ], limit=2)
+        if len(partners) > 1:
+            raise UserError(_("Existen contactos duplicados con este documento. Revisión administrativa necesaria."))
+        if partners and ((not partners.active and not partners.alvina_pos_fiscal_identity)
+                         or partners.country_id.code != "PE"
+                         or partners.l10n_latam_identification_type_id != identification):
+            raise UserError(_("El documento existe con país/tipo incorrecto o en un contacto archivado. Revisión administrativa necesaria."))
+        return partners
+
+    def _alvina_confirm_identity(self, preview):
+        self.ensure_one()
+        validate_identity(preview.kind, preview.number)
+        self.env.cr.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ["alvina:" + preview.number])
+        partner = self._alvina_partner(preview.kind, preview.number)
+        if partner:
+            if partner.name != preview.name or (partner.street or "") != (preview.street or ""):
+                raise UserError(_("Los datos del cliente cambiaron. Consulte el documento nuevamente."))
+            return partner
+        values = {
+            "name": preview.name, "street": preview.street, "vat": preview.number,
+            "country_id": self.env.ref("base.pe").id, "company_id": self.id,
+            "active": False, "alvina_pos_fiscal_identity": True,
+            "is_company": preview.kind == "factura",
+            "l10n_latam_identification_type_id": self.env.ref(
+                "l10n_pe.it_DNI" if preview.kind == "boleta" else "l10n_pe.it_RUC").id,
+        }
+        if preview.ubigeo:
+            district = self.env["l10n_pe.res.city.district"].search([("code", "=", preview.ubigeo)], limit=1)
+            if district:
+                values.update({"l10n_pe_district": district.id, "city_id": district.city_id.id,
+                               "city": district.city_id.name, "state_id": district.city_id.state_id.id})
+        return self.env["res.partner"].sudo().with_company(self).create(values)
 
     def _alvina_lookup_external(self, kind, number):
         """Backend-only transport with the documented JSON.PE contract by default.

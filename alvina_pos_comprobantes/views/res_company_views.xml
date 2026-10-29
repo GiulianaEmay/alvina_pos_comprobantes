@@ -7,11 +7,13 @@
         <field name="arch" type="xml">
             <xpath expr="//notebook" position="inside">
                 <page string="ALVIÑA POS" name="alvina_pos" groups="base.group_system">
-                    <group string="Procesamiento">
-                        <field name="alvina_emission_mode"/>
-                        <div class="alert alert-warning" colspan="2">
-                            Pendiente no ejecuta la facturación nocturna. Conecte y pruebe su adaptador.
-                            Procesado en Odoo no significa aceptado por SUNAT/OSE.
+                    <group string="Emisión inmediata desde el POS">
+                        <field name="alvina_edi_format_id" options="{'no_create': True}"/>
+                        <div class="text-muted" colspan="2">
+                            Al confirmar se factura el pedido original y se envía mediante la integración
+                            electrónica SUNAT/OSE de Odoo. Después puede imprimir desde la misma ventana.
+                            Se utiliza el diario, la serie y el proveedor ya configurados en su POS.
+                            El formato oficial peruano se detecta automáticamente si está habilitado en el diario.
                         </div>
                     </group>
                     <group string="Consulta de clientes con JSON.PE">

@@ -1,7 +1,9 @@
 # ALVIÑA POS
 
-Consulte el [README del repositorio](../README.md) para instalación en Odoo 19,
-seguridad, configuración JSON.PE, contrato de integración nocturna y pruebas.
+Captura rápida de DNI/RUC en Pago con consulta JSON.PE, emisión por la integración
+SUNAT/OSE de Odoo e impresión del mismo comprobante desde el recibo.
+Sin alta manual de contactos ni dependencia de un proceso nocturno.
 
-Dependencias: `point_of_sale`, `l10n_pe`, `requests`. Modo inicial: pendiente;
-no contiene un cron nocturno ni un emisor electrónico propio.
+Los clientes nuevos quedan como identidades fiscales internas archivadas.
+Consulte el README del repositorio para instalación, actualización y pruebas.
+Dependencias: point_of_sale, l10n_pe, account_edi, requests.

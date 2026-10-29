@@ -30,4 +30,8 @@ def parse_response(kind, number, payload):
             break
     if kind == "factura" and not street:
         raise ValueError("JSON.PE no devolvió una dirección fiscal válida.")
-    return {"name": name, "street": street}
+    result = {"name": name, "street": street}
+    ubigeo = data.get("ubigeo_sunat")
+    if isinstance(ubigeo, str) and len(ubigeo) == 6 and ubigeo.isascii() and ubigeo.isdigit():
+        result["ubigeo_sunat"] = ubigeo
+    return result

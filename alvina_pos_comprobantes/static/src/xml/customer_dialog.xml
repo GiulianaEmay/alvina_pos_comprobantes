@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <t t-name="alvina_pos_comprobantes.CustomerDialog">
+        <Dialog title="'boleta/factura'">
+            <div class="d-flex flex-column gap-3">
+                <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
+                <label for="alvina-customer-kind">Tipo de comprobante</label>
+                <select id="alvina-customer-kind" class="form-select" t-model="state.kind" t-on-change="changeKind" t-att-disabled="state.busy">
+                    <option value="boleta">Boleta</option>
+                    <option value="factura">Factura</option>
+                </select>
+                <label for="alvina-customer-number" t-esc="state.kind === 'boleta' ? 'DNI' : 'RUC'"/>
+                <input id="alvina-customer-number" class="form-control" inputmode="numeric" autocomplete="off" t-att-value="state.number" t-att-maxlength="state.kind === 'boleta' ? 8 : 11" t-on-input="changeNumber" t-att-disabled="state.busy"/>
+                <div t-if="state.busy" role="status">Consultando…</div>
+                <div t-if="state.preview" class="alert alert-info" aria-live="polite">
+                    <strong t-esc="state.preview.name"/>
+                    <div t-esc="state.preview.street"/>
+                </div>
+                <button t-if="!state.preview" class="btn btn-secondary" t-on-click="lookup" t-att-disabled="state.busy || !validNumber">Consultar</button>
+            </div>
+            <t t-set-slot="footer">
+                <button class="btn btn-secondary" t-on-click="props.close" t-att-disabled="state.busy">Cancelar</button>
+                <button class="btn btn-primary" t-on-click="confirm" t-att-disabled="state.busy || !state.preview">Confirmar</button>
+            </t>
+        </Dialog>
+    </t>
+    <t t-name="alvina_pos_comprobantes.PaymentScreenButtons" t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
+        <xpath expr="//button[hasclass('js_invoice')]" position="replace">
+            <button class="btn btn-primary btn-lg w-100 w-md-50" t-on-click="alvinaOpenCustomer">
+                <i class="fa fa-file-text-o me-2"/>boleta/factura
+            </button>
+        </xpath>
+    </t>
+</templates>
