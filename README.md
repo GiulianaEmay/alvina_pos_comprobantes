@@ -1,6 +1,6 @@
 # ALVIÑA POS — boleta/factura para Odoo 19
 
-**Versión 19.0.2.0.0.** Captura rápida de DNI/RUC, consulta JSON.PE y uso de la
+**Versión 19.0.2.0.1.** Captura rápida de DNI/RUC, consulta JSON.PE y uso de la
 facturación electrónica peruana que ya está configurada en Odoo. No requiere un
 proceso nocturno. El addon está dentro de `alvina_pos_comprobantes/`.
 
@@ -60,6 +60,23 @@ solo como compatibilidad de base de datos y ya no dirige la emisión del botón.
 No se crean diarios, series, certificados ni claves de proveedor de demostración.
 Si el emisor existente no utiliza `account_edi`, se requiere conectar su API real;
 el addon se detiene con un mensaje de configuración en vez de fingir el envío.
+
+### Compatibilidad con el repositorio de ALVIÑA
+
+El repositorio `alvinha-cybe` compartido contiene `alvinha_point_of_sale`, que
+también hereda `PaymentScreenButtons` y busca el texto de la opción nativa de
+facturación. Desde 19.0.2.0.1 se conserva ese árbol como destino de herencia, sin
+renderizarlo, y se muestra únicamente el botón `boleta/factura`. Se comprobó la
+composición de ambas plantillas en los dos órdenes de carga con el helper oficial
+de herencia de Odoo 19 ejecutado de forma aislada. Reemplazar por completo el
+botón nativo eliminaba el destino requerido por el otro módulo.
+
+El código compartido también selecciona diarios por cliente y aplaza el envío
+electrónico durante `_generate_pos_order_invoice()` mediante el contexto
+`skip_pe_pos_immediate_send`. El diálogo del recibo permite enviar el comprobante
+existente mediante su documento EDI. No se ha ejecutado una prueba integral de
+estos módulos Enterprise ni del cron en la instalación real de ALVIÑA; esta
+revisión de código y plantillas no sustituye esa validación.
 
 ## JSON.PE
 

@@ -25,8 +25,13 @@
         </Dialog>
     </t>
     <t t-name="alvina_pos_comprobantes.PaymentScreenButtons" t-inherit="point_of_sale.PaymentScreenButtons" t-inherit-mode="extension">
-        <xpath expr="//button[hasclass('js_invoice')]" position="replace">
-            <button class="btn btn-primary btn-lg w-100 w-md-50" t-on-click="alvinaOpenCustomer">
+        <!-- Keep the native subtree as an inheritance target for other addons,
+             including alvinha_point_of_sale, but render only our fiscal button. -->
+        <xpath expr="//button[hasclass('js_invoice')]" position="attributes">
+            <attribute name="t-if">false</attribute>
+        </xpath>
+        <xpath expr="//button[hasclass('js_invoice')]" position="after">
+            <button class="btn btn-primary btn-lg w-100 w-md-50" t-on-click="alvinaOpenCustomer" t-att-disabled="!pos.config.canInvoice || currentOrder?.refunded_order_id?.isToInvoice()">
                 <i class="fa fa-file-text-o me-2"/>boleta/factura
             </button>
         </xpath>
