@@ -1,6 +1,6 @@
-# ALVIÑA POS — boleta/factura para Odoo 19
+# ALVIÑA POS — Boleta/Factura para Odoo 19
 
-**Versión 19.0.2.0.1.** Captura rápida de DNI/RUC, consulta JSON.PE y uso de la
+**Versión 19.0.2.0.2.** Captura rápida de DNI/RUC, consulta JSON.PE y uso de la
 facturación electrónica peruana que ya está configurada en Odoo. No requiere un
 proceso nocturno. El addon está dentro de `alvina_pos_comprobantes/`.
 
@@ -9,7 +9,7 @@ proceso nocturno. El addon está dentro de `alvina_pos_comprobantes/`.
 ALVIÑA confirmó que los tickets **ya se facturan electrónicamente al cobrar**.
 Por eso la identidad se captura antes de esa emisión:
 
-1. En **Pago**, pulse el único botón **boleta/factura** (reemplaza la opción
+1. En **Pago**, pulse el único botón **Boleta/Factura** (reemplaza la opción
    estándar de facturación). Elija Boleta o Factura e ingrese DNI o RUC.
 2. Al completar 8 u 11 dígitos se consulta automáticamente el cliente. Se reutiliza
    una identidad local válida; si no existe, el backend consulta JSON.PE.
@@ -17,7 +17,7 @@ Por eso la identidad se captura antes de esa emisión:
    tipo 03/01 al pedido aún editable. Si el pago está completo se continúa con la
    validación oficial del POS; de lo contrario termine de ingresar el pago.
 4. Odoo emite usando su diario, serie, impuestos y proveedor SUNAT/OSE existentes.
-5. En la pantalla de recibo, **boleta/factura** recupera el comprobante del pedido.
+5. En la pantalla de recibo, **Boleta/Factura** recupera el comprobante del pedido.
    Puede descargar/imprimir el PDF localizado desde esa ventana. Si su documento
    EDI está preparado pero pendiente de envío, **Enviar e imprimir** procesa ese
    mismo comprobante y abre su PDF cuando Odoo registra el envío satisfactorio.
@@ -66,7 +66,7 @@ el addon se detiene con un mensaje de configuración en vez de fingir el envío.
 El repositorio `alvinha-cybe` compartido contiene `alvinha_point_of_sale`, que
 también hereda `PaymentScreenButtons` y busca el texto de la opción nativa de
 facturación. Desde 19.0.2.0.1 se conserva ese árbol como destino de herencia, sin
-renderizarlo, y se muestra únicamente el botón `boleta/factura`. Se comprobó la
+renderizarlo, y se muestra únicamente el botón `Boleta/Factura`. Se comprobó la
 composición de ambas plantillas en los dos órdenes de carga con el helper oficial
 de herencia de Odoo 19 ejecutado de forma aislada. Reemplazar por completo el
 botón nativo eliminaba el destino requerido por el otro módulo.

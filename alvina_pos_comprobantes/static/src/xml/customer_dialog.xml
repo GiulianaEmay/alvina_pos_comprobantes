@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <templates xml:space="preserve">
     <t t-name="alvina_pos_comprobantes.CustomerDialog">
-        <Dialog title="'boleta/factura'">
+        <Dialog title="'Boleta/Factura'">
             <div class="d-flex flex-column gap-3">
                 <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
                 <label for="alvina-customer-kind">Tipo de comprobante</label>
@@ -32,7 +32,7 @@
         </xpath>
         <xpath expr="//button[hasclass('js_invoice')]" position="after">
             <button class="btn btn-primary btn-lg w-100 w-md-50" t-on-click="alvinaOpenCustomer" t-att-disabled="!pos.config.canInvoice || currentOrder?.refunded_order_id?.isToInvoice()">
-                <i class="fa fa-file-text-o me-2"/>boleta/factura
+                <i class="fa fa-file-text-o me-2"/>Boleta/Factura
             </button>
         </xpath>
     </t>

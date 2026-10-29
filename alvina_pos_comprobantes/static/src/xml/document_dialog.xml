@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <templates xml:space="preserve">
     <t t-name="alvina_pos_comprobantes.DocumentDialog">
-        <Dialog title="'Boleta / Factura'">
+        <Dialog title="'Boleta/Factura'">
             <div class="d-flex flex-column gap-3" t-att-aria-busy="state.busy ? 'true' : 'false'">
                 <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
                 <t t-if="!locked">
