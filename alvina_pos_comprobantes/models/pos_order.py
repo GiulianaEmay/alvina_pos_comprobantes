@@ -10,12 +10,70 @@ class PosOrder(models.Model):
     _inherit = "pos.order"
 
     alvina_document_kind = fields.Selection([("boleta", "Boleta"), ("factura", "Factura")], copy=False)
+    alvina_receipt_first = fields.Boolean(copy=False, readonly=True)
+
+    def _process_saved_order(self, draft):
+        self.ensure_one()
+        receipt_first = (not draft and self.state != "cancel" and self.company_id.country_id.code == "PE"
+                         and self.amount_total > 0 and not self.is_refund and not self.account_move)
+        queued = self.to_invoice or any(
+            getattr(method, "auto_invoice", False) for method in self.payment_ids.payment_method_id
+        )
+        if receipt_first:
+            # Defer native immediate invoicing, while retaining the supplied
+            # partner module's automatic/nightly billing preference afterwards.
+            self.write({"to_invoice": False, "alvina_receipt_first": True})
+        result = super()._process_saved_order(draft)
+        if receipt_first:
+            self.to_invoice = queued
+        return result
+
+    def _generate_pos_order_invoice(self):
+        if self.filtered("alvina_receipt_first"):
+            self.ensure_one()
+            self._alvina_lock()
+            if self.account_move:
+                return self.account_move
+            # A later invocation may be the partner's existing nightly job.
+            # Its normal invoicing is retained; a confirmed receipt request uses
+            # the same lock and can never create a second invoice for this sale.
+        return super()._generate_pos_order_invoice()
+
+    def _alvina_invoice_journal(self):
+        self.ensure_one()
+        # The supplied alvinha_point_of_sale implementation defines this selector
+        # and uses it in _prepare_invoice_vals for its Boleta/Factura journals.
+        selector = getattr(self.config_id, "_get_journal", None)
+        return selector(self.partner_id, self.refunded_order_id) if selector else self.config_id.invoice_journal_id
+
+    def _alvina_fiscal_position(self, partner):
+        """Mirror Odoo 19 PosOrder.updatePricelistAndFiscalPosition, including its fallback."""
+        self.ensure_one()
+        config = self.config_id
+        if config.use_presets and self.preset_id.fiscal_position_id:
+            return self.preset_id.fiscal_position_id
+        position = self.env["account.fiscal.position"].sudo().with_company(self.company_id)._get_fiscal_position(partner)
+        return position if position and position in config.fiscal_position_ids else config.default_fiscal_position_id
+
+    def _alvina_check_fiscal_compatibility(self, partner):
+        self.ensure_one()
+        expected = self._alvina_fiscal_position(partner)
+        if expected != self.fiscal_position_id:
+            for line in self.lines:
+                before = self.fiscal_position_id.map_tax(line.tax_ids)
+                after = expected.map_tax(line.tax_ids)
+                if set(before.ids) != set(after.ids):
+                    raise UserError(_(
+                        "El cliente requiere impuestos diferentes a los cobrados en el ticket. "
+                        "No se puede cambiar el importe ni el tratamiento fiscal de una venta pagada desde este botón."
+                    ))
+        return expected
 
     @api.model
     def _load_pos_data_fields(self, config):
         names = super()._load_pos_data_fields(config)
         # Empty means ALL model fields in the official loader, not no fields.
-        return names + ["alvina_document_kind"] if names else names
+        return names + ["alvina_document_kind", "alvina_receipt_first"] if names else names
 
     def _alvina_check_access(self):
         self.ensure_one()
@@ -57,6 +115,8 @@ class PosOrder(models.Model):
 
     def alvina_lookup_identity(self, kind, number):
         self._alvina_check_access()
+        if self.account_move:
+            raise UserError(_("Este ticket ya tiene un comprobante. Abra el documento existente para imprimirlo."))
         try:
             validate_identity(kind, number)
         except ValueError as exc:
@@ -69,6 +129,7 @@ class PosOrder(models.Model):
         preview = self.env["alvina.pos.identity"].sudo().create({
             "order_id": self.id, "requested_by": self.env.uid, "kind": kind, "number": number,
             "name": data["name"], "street": data.get("street", ""), "partner_id": partner.id,
+            "ubigeo": data.get("ubigeo_sunat", ""),
         })
         return {"identity_id": preview.id, "name": preview.name,
                 "street": preview.street or "", "number": number, "kind": kind}
@@ -103,17 +164,20 @@ class PosOrder(models.Model):
         if self.account_move:
             raise UserError(_("El pedido ya tiene un comprobante. No se creará otro."))
         partner = self.company_id.sudo()._alvina_confirm_identity(preview)
-        # Do not recalculate prices, taxes or fiscal positions on a completed sale.
-        # Reject a partner whose fiscal position would require changing this sale.
-        fiscal = self.env["account.fiscal.position"].sudo().with_company(self.company_id)._get_fiscal_position(partner)
-        if fiscal != self.fiscal_position_id:
-            raise UserError(_("La posición fiscal del cliente no coincide con la venta. Revisión contable necesaria."))
-        edi_format = self.company_id.sudo()._alvina_get_edi_format(self.config_id.invoice_journal_id)
+        # Respect the POS default/preset instead of comparing the partner's raw
+        # automatic position to the paid ticket. Equivalent tax mappings may use
+        # different positions; changing the already-collected taxes is forbidden.
+        fiscal = self._alvina_check_fiscal_compatibility(partner)
+        totals = self.amount_total, self.amount_tax
+        self.write({"partner_id": partner.id, "fiscal_position_id": fiscal.id})
+        if any(not self.currency_id.is_zero(after - before)
+               for before, after in zip(totals, (self.amount_total, self.amount_tax))):
+            raise UserError(_("La identificación fiscal modificaría los importes del ticket pagado. Revise esta venta en Contabilidad."))
+        edi_format = self.company_id.sudo()._alvina_get_edi_format(self._alvina_invoice_journal())
         request = self.env["alvina.pos.document.request"].sudo().create({
             "order_id": self.id, "requested_by": self.env.uid, "kind": preview.kind,
             "number": preview.number, "partner_id": partner.id, "edi_format_id": edi_format.id,
         })
-        self.write({"partner_id": partner.id})
         request._process_pending()
         return request._status_payload()
 
@@ -175,6 +239,7 @@ class PosOrder(models.Model):
         if request:
             document = request._validate_for_invoice()
             values["l10n_latam_document_type_id"] = document.id
+            values["journal_id"] = self._alvina_invoice_journal().id
         elif self.alvina_document_kind:
             kind, partner = self.alvina_document_kind, self.partner_id
             try:
@@ -186,7 +251,9 @@ class PosOrder(models.Model):
                     or (kind == "factura" and not partner.street)
                     or values["partner_id"] != partner.id):
                 raise UserError(_("Los datos fiscales del cliente no coinciden con el comprobante seleccionado."))
-            self.company_id.sudo()._alvina_get_edi_format(self.config_id.invoice_journal_id)
+            journal = self._alvina_invoice_journal()
+            self.company_id.sudo()._alvina_get_edi_format(journal)
+            values["journal_id"] = journal.id
             document = self.env["l10n_latam.document.type"].search([
                 ("country_id.code", "=", "PE"), ("code", "=", "03" if kind == "boleta" else "01"),
                 ("internal_type", "=", "invoice"),

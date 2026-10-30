@@ -6,12 +6,13 @@
                 <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
                 <t t-if="!locked">
                     <label for="alvina-kind">Tipo de comprobante</label>
-                    <select id="alvina-kind" class="form-select" t-model="state.kind" t-on-change="invalidatePreview" t-att-disabled="state.busy">
+                    <div class="text-muted">El ticket de atención ya está pagado. Aquí emite su boleta o factura.</div>
+                    <select id="alvina-kind" class="form-select" t-model="state.kind" t-on-change="changeKind" t-att-disabled="state.busy">
                         <option value="boleta">Boleta (03)</option>
                         <option value="factura">Factura (01)</option>
                     </select>
                     <label for="alvina-number" t-esc="state.kind === 'boleta' ? 'DNI (8 dígitos)' : 'RUC (11 dígitos)'"/>
-                    <input id="alvina-number" class="form-control" inputmode="numeric" autocomplete="off" t-model="state.number" t-on-input="invalidatePreview" t-att-maxlength="state.kind === 'boleta' ? 8 : 11" t-att-disabled="state.busy"/>
+                    <input id="alvina-number" class="form-control" inputmode="numeric" autocomplete="off" t-att-value="state.number" t-on-input="changeNumber" t-att-maxlength="state.kind === 'boleta' ? 8 : 11" t-att-disabled="state.busy"/>
                     <button class="btn btn-secondary" t-on-click="lookup" t-att-disabled="state.busy || !validNumber">Consultar cliente</button>
                     <div t-if="state.preview" class="alert alert-info" aria-live="polite">
                         <strong t-esc="state.preview.name"/>

@@ -72,12 +72,12 @@ class AlvinaPosDocumentRequest(models.Model):
             raise UserError(_("La identidad o dirección fiscal del cliente ya no es válida."))
         if partner.address_get(["invoice"])["invoice"] != partner.id:
             raise UserError(_("El contacto tiene otra dirección de facturación. Revisión contable necesaria."))
-        fiscal = self.env["account.fiscal.position"].with_company(order.company_id)._get_fiscal_position(partner)
+        fiscal = order._alvina_fiscal_position(partner)
         if fiscal != order.fiscal_position_id:
             raise UserError(_("La posición fiscal cambió. Revisión contable necesaria."))
         if order.state not in ("paid", "done", "invoiced") or order.amount_total <= 0:
             raise UserError(_("El pedido no es una venta pagada válida."))
-        journal = order.config_id.invoice_journal_id
+        journal = order._alvina_invoice_journal()
         if (not journal or journal.company_id != order.company_id or journal.type != "sale"
                 or not journal.l10n_latam_use_documents or order.company_id.country_id.code != "PE"):
             raise UserError(_("Configure un diario de ventas peruano con documentos en el POS."))
@@ -94,7 +94,7 @@ class AlvinaPosDocumentRequest(models.Model):
         if (invoice.state != "posted" or invoice.move_type != "out_invoice"
                 or invoice.company_id != self.company_id or invoice.partner_id != self.partner_id
                 or invoice.l10n_latam_document_type_id != document
-                or invoice.journal_id != self.order_id.config_id.invoice_journal_id
+                or invoice.journal_id != self.order_id._alvina_invoice_journal()
                 or invoice.pos_order_ids != self.order_id
                 or invoice.currency_id != self.order_id.currency_id
                 or not self.order_id.currency_id.is_zero(invoice.amount_total - self.order_id.amount_total)):
@@ -118,7 +118,7 @@ class AlvinaPosDocumentRequest(models.Model):
                 self._validate_for_invoice()
                 order = self.order_id.with_company(self.company_id)
                 if not self.edi_format_id:
-                    self.edi_format_id = self.company_id._alvina_get_edi_format(order.config_id.invoice_journal_id)
+                    self.edi_format_id = self.company_id._alvina_get_edi_format(order._alvina_invoice_journal())
                 if not order.account_move:
                     order.with_context(
                         generate_pdf=False, skip_account_edi_cron_trigger=True,

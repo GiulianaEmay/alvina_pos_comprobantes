@@ -1,4 +1,4 @@
-import { Component, onWillStart, useState } from "@odoo/owl";
+import { Component, onWillStart, onWillUnmount, useState } from "@odoo/owl";
 import { Dialog } from "@web/core/dialog/dialog";
 import { useService } from "@web/core/utils/hooks";
 
@@ -13,6 +13,7 @@ export class AlvinaDocumentDialog extends Component {
             kind: "boleta", number: "", preview: null, status: null,
             busy: false, error: "", ready: false,
         });
+        onWillUnmount(() => clearTimeout(this.lookupTimer));
         onWillStart(() => this.run(async () => {
             if (!this.props.order.isSynced || !Number.isInteger(this.props.order.id)) {
                 throw new Error("Sincronice el pedido con el servidor antes de solicitar un comprobante.");
@@ -65,11 +66,29 @@ export class AlvinaDocumentDialog extends Component {
     }
 
     invalidatePreview() {
+        clearTimeout(this.lookupTimer);
         this.state.preview = null;
         this.state.error = "";
     }
 
+    changeKind() {
+        this.state.number = "";
+        this.invalidatePreview();
+    }
+
+    changeNumber(event) {
+        this.state.number = event.target.value;
+        this.invalidatePreview();
+        if (this.validNumber) {
+            this.lookupTimer = setTimeout(() => this.lookup(), 450);
+        }
+    }
+
     lookup() {
+        clearTimeout(this.lookupTimer);
+        if (this.state.busy || this.locked || !this.validNumber) {
+            return;
+        }
         this.state.preview = null;
         return this.run(async () => {
             this.state.preview = await this.rpc("alvina_lookup_identity", [this.state.kind, this.state.number]);

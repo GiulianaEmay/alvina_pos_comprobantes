@@ -10,7 +10,9 @@
                     <group string="Emisión inmediata desde el POS">
                         <field name="alvina_edi_format_id" options="{'no_create': True}"/>
                         <div class="text-muted" colspan="2">
-                            Al confirmar se factura el pedido original y se envía mediante la integración
+                            Primero se cobra y se imprime el ticket de atención. Desde su pantalla de recibo,
+                            Boleta/Factura consulta el DNI/RUC y, al confirmar, factura el pedido original
+                            y lo envía mediante la integración
                             electrónica SUNAT/OSE de Odoo. Después puede imprimir desde la misma ventana.
                             Se utiliza el diario, la serie y el proveedor ya configurados en su POS.
                             El formato oficial peruano se detecta automáticamente si está habilitado en el diario.

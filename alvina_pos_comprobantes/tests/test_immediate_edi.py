@@ -2,6 +2,7 @@
 from unittest.mock import patch
 
 from odoo import Command
+from odoo.exceptions import UserError
 from odoo.tests import tagged
 from odoo.addons.point_of_sale.tests.common import CommonPosTest
 
@@ -68,7 +69,7 @@ class TestAlvinaImmediateEdi(CommonPosTest):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def invoiced_order(self, kind="boleta", create_invoice=True):
+    def invoiced_order(self, kind="boleta", create_invoice=True, state="paid"):
         partner = self.partner
         if kind == "factura":
             partner = self.env["res.partner"].create({
@@ -78,7 +79,7 @@ class TestAlvinaImmediateEdi(CommonPosTest):
             })
         fiscal = self.env["account.fiscal.position"].with_company(self.company)._get_fiscal_position(partner)
         order = self.env["pos.order"].create({
-            "session_id": self.session.id, "company_id": self.company.id, "state": "paid",
+            "session_id": self.session.id, "company_id": self.company.id, "state": state,
             "partner_id": partner.id, "alvina_document_kind": kind, "fiscal_position_id": fiscal.id,
             "amount_total": 118, "amount_tax": 18, "amount_paid": 118, "amount_return": 0,
             "lines": [Command.create({"product_id": self.product.id, "qty": 1, "price_unit": 100,
@@ -161,3 +162,147 @@ class TestAlvinaImmediateEdi(CommonPosTest):
         self.assertEqual(self.env["account.move"].search_count([]), before)
         self.assertEqual(invoice.l10n_latam_document_type_id.code, "03")
         self.assertEqual(order.alvina_send_document()["state"], "sent")
+
+    def test_ticket_first_then_receipt_emission_keeps_original_sale_and_payment(self):
+        order = self.invoiced_order(create_invoice=False, state="draft")
+        order.write({"to_invoice": True, "partner_id": False,
+                     "alvina_document_kind": False})
+        payments = order.payment_ids
+        order._process_saved_order(draft=False)
+        self.assertEqual(order.state, "paid")
+        self.assertTrue(order.alvina_receipt_first)
+        self.assertTrue(order.to_invoice)  # Existing automatic billing stays queued.
+        self.assertFalse(order.account_move)
+        self.assertEqual(order.payment_ids, payments)
+        self.assertFalse(self.sent)
+        self.assertEqual(order.alvina_document_status()["state"], "none")
+
+        preview = order.alvina_lookup_identity("boleta", self.partner.vat)["identity_id"]
+        self.assertFalse(order.account_move)
+        self.assertEqual(order.alvina_submit_document(preview)["state"], "to_send")
+        invoice = order.account_move
+        self.assertTrue(order.to_invoice)
+        self.assertEqual(invoice.l10n_latam_document_type_id.code, "03")
+        self.assertEqual(order.alvina_send_document()["state"], "sent")
+        self.assertEqual(order.payment_ids, payments)
+        self.assertEqual(invoice.pos_order_ids, order)
+        self.assertEqual(self.sent, invoice.ids)
+        self.assertEqual(order._generate_pos_order_invoice(), invoice)
+        self.assertEqual(self.sent, invoice.ids)
+
+    def test_existing_batch_can_invoice_queued_ticket_once(self):
+        order = self.invoiced_order(create_invoice=False)
+        order.write({"alvina_receipt_first": True, "to_invoice": True})
+        order.with_context(generate_pdf=False, skip_account_edi_cron_trigger=True).action_pos_order_invoice()
+        invoice = order.account_move
+        self.assertEqual(invoice.state, "posted")
+        self.assertEqual(order._generate_pos_order_invoice(), invoice)
+        self.assertEqual(invoice.pos_order_ids, order)
+        self.assertFalse(self.sent)
+
+    def test_fast_payment_auto_invoice_preference_is_preserved_without_early_invoice(self):
+        order = self.invoiced_order(create_invoice=False, state="draft")
+        order.to_invoice = False  # Frontend already deferred its fiscal request.
+        with patch.object(type(self.bank_payment_method), "auto_invoice", True, create=True):
+            order._process_saved_order(draft=False)
+        self.assertTrue(order.to_invoice)
+        self.assertTrue(order.alvina_receipt_first)
+        self.assertFalse(order.account_move)
+        self.assertFalse(self.sent)
+
+    def test_boleta_uses_partner_journal_selector_and_its_edi_format(self):
+        order = self.invoiced_order(create_invoice=False)
+        order.alvina_receipt_first = True
+        ballot_journal = order.config_id.invoice_journal_id.copy({"name": "Boletas ALVIÑA test", "code": "ABOL"})
+        ballot_journal.edi_format_ids = self.format
+        order.config_id.invoice_journal_id.edi_format_ids = False
+        with patch.object(type(order.config_id), "_get_journal", lambda config, partner, refunded: ballot_journal, create=True):
+            preview = order.alvina_lookup_identity("boleta", self.partner.vat)["identity_id"]
+            result = order.alvina_submit_document(preview)
+            self.assertEqual(result["state"], "to_send", result["message"])
+            self.assertEqual(order.account_move.journal_id, ballot_journal)
+            self.assertEqual(order.account_move.l10n_latam_document_type_id.code, "03")
+            self.assertEqual(order._alvina_request().edi_format_id, self.format)
+            self.assertEqual(order.alvina_send_document()["state"], "sent")
+
+    def test_existing_fiscal_document_cannot_start_a_second_identity_lookup(self):
+        order = self.invoiced_order()
+        invoice = order.account_move
+        with self.assertRaises(UserError):
+            order.alvina_lookup_identity("boleta", self.partner.vat)
+        self.assertEqual(order.account_move, invoice)
+
+    def test_pos_default_fiscal_position_allows_receipt_emission(self):
+        order = self.invoiced_order(create_invoice=False)
+        default = self.env["account.fiscal.position"].create({"name": "Venta local POS", "company_id": self.company.id})
+        order.config_id.default_fiscal_position_id = default
+        order.fiscal_position_id = default
+        with patch.object(type(self.env["account.fiscal.position"]), "_get_fiscal_position", return_value=self.env["account.fiscal.position"]):
+            preview = order.alvina_lookup_identity("boleta", self.partner.vat)["identity_id"]
+            result = order.alvina_submit_document(preview)
+        self.assertEqual(result["state"], "to_send", result["message"])
+        self.assertEqual(order.account_move.fiscal_position_id, default)
+        self.assertEqual(order.amount_total, 118)
+        self.assertEqual(order.amount_tax, 18)
+
+    def test_equivalent_fiscal_positions_preserve_paid_taxes_and_emit(self):
+        order = self.invoiced_order(create_invoice=False)
+        previous = self.env["account.fiscal.position"].create({"name": "Ticket atención", "company_id": self.company.id})
+        expected = self.env["account.fiscal.position"].create({"name": "Cliente identificado", "company_id": self.company.id})
+        order.fiscal_position_id = previous
+        order.config_id.tax_regime_selection = True
+        order.config_id.fiscal_position_ids |= expected
+        self.partner.with_company(self.company).property_account_position_id = expected
+        preview = order.alvina_lookup_identity("boleta", self.partner.vat)["identity_id"]
+        result = order.alvina_submit_document(preview)
+        self.assertEqual(result["state"], "to_send", result["message"])
+        self.assertEqual(order.fiscal_position_id, expected)
+        self.assertEqual(order.account_move.fiscal_position_id, expected)
+        self.assertEqual(order.amount_total, 118)
+        self.assertEqual(order.amount_tax, 18)
+
+    def test_different_tax_treatment_cannot_rewrite_a_paid_ticket(self):
+        order = self.invoiced_order(create_invoice=False)
+        zero = self.tax.copy({"name": "Exonerado test", "amount": 0,
+                              "original_tax_ids": [Command.set(self.tax.ids)]})
+        expected = self.env["account.fiscal.position"].create({
+            "name": "Exoneración incompatible", "company_id": self.company.id,
+            "tax_ids": [Command.set(zero.ids)],
+        })
+        order.config_id.tax_regime_selection = True
+        order.config_id.fiscal_position_ids |= expected
+        self.partner.with_company(self.company).property_account_position_id = expected
+        preview = order.alvina_lookup_identity("boleta", self.partner.vat)["identity_id"]
+        with self.assertRaisesRegex(UserError, "impuestos diferentes"):
+            order.alvina_submit_document(preview)
+        self.assertFalse(order.account_move)
+        self.assertEqual(order.amount_total, 118)
+        self.assertEqual(order.amount_tax, 18)
+        self.assertFalse(self.sent)
+
+    def test_factura_from_paid_ticket_looks_up_ruc_creates_hidden_identity_and_sends(self):
+        order = self.invoiced_order(create_invoice=False)
+        order.write({"partner_id": False, "alvina_document_kind": False,
+                     "alvina_receipt_first": True, "to_invoice": False})
+        payments = order.payment_ids
+        default = self.env["account.fiscal.position"].create({"name": "POS ventas locales RUC", "company_id": self.company.id})
+        order.config_id.default_fiscal_position_id = default
+        order.fiscal_position_id = default
+        with patch.object(type(self.company), "_alvina_lookup_external", return_value={
+            "name": "EMPRESA CONSULTADA DE PRUEBA", "street": "DOMICILIO FISCAL DE PRUEBA",
+        }) as lookup:
+            preview = order.alvina_lookup_identity("factura", "20100070970")["identity_id"]
+        lookup.assert_called_once_with("factura", "20100070970")
+        self.assertFalse(order.account_move)
+        self.assertEqual(order.alvina_submit_document(preview)["state"], "to_send")
+        invoice = order.account_move
+        self.assertEqual(invoice.l10n_latam_document_type_id.code, "01")
+        self.assertEqual(invoice.partner_id.vat, "20100070970")
+        self.assertFalse(invoice.partner_id.active)
+        self.assertTrue(invoice.partner_id.alvina_pos_fiscal_identity)
+        self.assertFalse(self.env["res.partner"].search([("vat", "=", "20100070970")]))
+        self.assertEqual(order.alvina_send_document()["state"], "sent")
+        self.assertEqual(order.alvina_print_document()["type"], "ir.actions.act_url")
+        self.assertEqual(order.payment_ids, payments)
+        self.assertEqual(self.sent, invoice.ids)
+        self.assertEqual(invoice.amount_total, 118)

@@ -1,82 +1,93 @@
 # ALVIÑA POS — Boleta/Factura para Odoo 19
 
-**Versión 19.0.2.0.2.** Captura rápida de DNI/RUC, consulta JSON.PE y uso de la
-facturación electrónica peruana que ya está configurada en Odoo. No requiere un
-proceso nocturno. El addon está dentro de `alvina_pos_comprobantes/`.
+**Versión 19.0.3.0.0.** Ticket de atención primero y emisión fiscal al final del
+cobro. El addon instalable está dentro de `alvina_pos_comprobantes/`.
 
 ## Flujo de caja
 
-ALVIÑA confirmó que los tickets **ya se facturan electrónicamente al cobrar**.
-Por eso la identidad se captura antes de esa emisión:
+1. La caja cobra normalmente y Odoo genera/imprime el **ticket de atención**.
+   No se solicita DNI/RUC para facturar en la pantalla de pago.
+2. En **Pago exitoso**, debajo de **Imprimir recibo completo** y **Imprimir recibo
+   básico**, se pulsa el único botón **Boleta/Factura**.
+3. Dentro de esa ventana se elige **Boleta (03)** y DNI de 8 dígitos, o **Factura
+   (01)** y RUC de 11. Al completar el número se consultan automáticamente los
+   datos. Se busca primero en Odoo; si no existe, el backend consulta JSON.PE.
+4. Se revisan el nombre/razón social y la dirección y se pulsa **Confirmar y emitir**.
+   Se factura el mismo pedido ya pagado, se envía su documento electrónico con el
+   proveedor configurado en Odoo y se abre el PDF cuando Odoo confirma el envío.
+   Estos pasos se encadenan desde esa única confirmación.
+5. El **ticket de atención** y la **boleta/factura fiscal** son dos documentos de
+   una sola venta. No se registra otro pedido ni se vuelve a cobrar. Una nueva
+   apertura de Boleta/Factura muestra ese mismo comprobante y permite reimprimirlo.
 
-1. En **Pago**, pulse el único botón **Boleta/Factura** (reemplaza la opción
-   estándar de facturación). Elija Boleta o Factura e ingrese DNI o RUC.
-2. Al completar 8 u 11 dígitos se consulta automáticamente el cliente. Se reutiliza
-   una identidad local válida; si no existe, el backend consulta JSON.PE.
-3. Revise nombre/razón social y dirección y confirme. Se asigna el cliente y el
-   tipo 03/01 al pedido aún editable. Si el pago está completo se continúa con la
-   validación oficial del POS; de lo contrario termine de ingresar el pago.
-4. Odoo emite usando su diario, serie, impuestos y proveedor SUNAT/OSE existentes.
-5. En la pantalla de recibo, **Boleta/Factura** recupera el comprobante del pedido.
-   Puede descargar/imprimir el PDF localizado desde esa ventana. Si su documento
-   EDI está preparado pero pendiente de envío, **Enviar e imprimir** procesa ese
-   mismo comprobante y abre su PDF cuando Odoo registra el envío satisfactorio.
+No se abre Contactos ni se rellena su formulario. Si el cliente no existe, Odoo
+necesita una referencia `res.partner` para la factura: se crea **archivada**, marcada
+como identidad fiscal interna, fuera de las búsquedas habituales de Contactos y
+clientes del POS. Se reutiliza posteriormente. Los contactos ya existentes se
+reutilizan sin archivarlos. El registro contable interno sigue siendo necesario.
 
-No se pide abrir Contactos ni rellenar su formulario. Si el cliente no existe,
-Odoo necesita una referencia `res.partner` para la factura: se crea **archivada**,
-marcada como identidad fiscal interna, fuera de las búsquedas normales de
-Contactos y clientes del POS. Se reutiliza en consultas posteriores. Los contactos
-existentes se mantienen activos, sin archivarlos ni duplicarlos. No se prometen
-facturas sin registro fiscal interno: ese registro es necesario para la contabilidad.
-
-**Un comprobante electrónico ya emitido no se convierte a otro DNI/RUC ni de
-boleta a factura desde el recibo.** Ese botón lo recupera para imprimir, sin crear
-una segunda factura. Para nuevos comprobantes, introduzca los datos antes de
-cobrar. Las correcciones de documentos emitidos requieren el procedimiento fiscal
-correspondiente, fuera del alcance de este botón.
-
-Si un ticket todavía no tenía comprobante, el diálogo del recibo conserva la
-captura DNI/RUC y permite emitir inmediatamente contra **ese mismo pedido**.
+Si el ticket **ya tenía una boleta/factura**, el diálogo recupera el documento
+existente; no cambia su DNI/RUC ni crea otro. Los pedidos anteriores a esta versión
+que ya fueron facturados requieren su revisión contable si se desea corregirlos.
+El nuevo flujo evita generar el comprobante fiscal durante el cobro: primero se
+confirma la identidad en la pantalla del recibo.
 
 ## Instalación y actualización
 
-Requisitos: Odoo 19, `point_of_sale`, `l10n_pe`, `account_edi`, `requests` y una
-integración electrónica peruana configurada en el diario de facturación del POS.
+Requisitos: Odoo 19, `point_of_sale`, `l10n_pe`, `account_edi`, `requests` y la
+integración electrónica peruana configurada en los diarios de facturación del POS.
 `account_edi` es el motor oficial; no proporciona por sí solo certificados ni un
-proveedor SUNAT. Se detecta automáticamente el formato registrado por
-`l10n_pe_edi` cuando está habilitado en el diario. Otro proveedor compatible con
-`account_edi` puede seleccionarse en **Compañías → ALVIÑA POS → Formato electrónico
-SUNAT/OSE**. No se inventan métodos de módulos privados ni se implementa un emisor
-SUNAT alternativo.
+proveedor SUNAT. Se detecta el formato de `l10n_pe_edi` habilitado en el diario.
+Otro proveedor compatible puede seleccionarse en **Compañías → ALVIÑA POS → Formato
+electrónico SUNAT/OSE**. No se implementa un emisor SUNAT alternativo.
 
-1. El partner copia la carpeta del addon a su `addons_path` o descarga este commit.
-2. Reinicia Odoo y **actualiza el módulo** desde Aplicaciones (o con `-u
-   alvina_pos_comprobantes` en su procedimiento de despliegue). Reiniciar por sí
-   solo no crea los nuevos campos ni actualiza las vistas y assets.
-3. Recarga completamente el POS. Valida primero en una base de prueba.
+1. Reemplazar la carpeta completa del addon en el `addons_path`.
+2. Reiniciar Odoo y **actualizar el módulo** en Aplicaciones (o con `-u
+   alvina_pos_comprobantes` en el procedimiento del partner).
+3. Recargar completamente el POS. Verificar primero con una base de prueba.
 
-No hay que activar un modo nocturno. El selector antiguo de modo se conserva
-solo como compatibilidad de base de datos y ya no dirige la emisión del botón.
-No se crean diarios, series, certificados ni claves de proveedor de demostración.
-Si el emisor existente no utiliza `account_edi`, se requiere conectar su API real;
-el addon se detiene con un mensaje de configuración en vez de fingir el envío.
+No basta con reiniciar: esta versión añade `pos.order.alvina_receipt_first` y cambia
+los assets. Se retiran el botón fiscal y el diálogo de la pantalla de pago. El
+botón Boleta/Factura se encuentra únicamente al final, en la pantalla del recibo.
+Las devoluciones y las compañías no peruanas mantienen su validación nativa.
+En ventas positivas peruanas se conserva el cobro y la impresión nativos, pero se
+aplaza la creación inmediata de la factura fiscal hasta la pantalla del recibo. El
+marcador se asigna al sincronizar nuevas ventas pagadas, sin modificar ventas ya
+facturadas. La validación normal y el pago rápido usan el mismo hook oficial
+`OrderPaymentValidation`. Se mantiene visible ReceiptScreen aunque esté activado
+saltar esa pantalla, para ofrecer el botón al final del cobro.
 
-### Compatibilidad con el repositorio de ALVIÑA
+Si el proveedor no utiliza `account_edi`, debe conectarse su API real; el addon
+muestra un error de configuración. El modo nocturno anterior se conserva como
+campo de compatibilidad y no dirige la emisión desde el botón.
 
-El repositorio `alvinha-cybe` compartido contiene `alvinha_point_of_sale`, que
-también hereda `PaymentScreenButtons` y busca el texto de la opción nativa de
-facturación. Desde 19.0.2.0.1 se conserva ese árbol como destino de herencia, sin
-renderizarlo, y se muestra únicamente el botón `Boleta/Factura`. Se comprobó la
-composición de ambas plantillas en los dos órdenes de carga con el helper oficial
-de herencia de Odoo 19 ejecutado de forma aislada. Reemplazar por completo el
-botón nativo eliminaba el destino requerido por el otro módulo.
+### Integración con el repositorio aportado de ALVIÑA
 
-El código compartido también selecciona diarios por cliente y aplaza el envío
-electrónico durante `_generate_pos_order_invoice()` mediante el contexto
-`skip_pe_pos_immediate_send`. El diálogo del recibo permite enviar el comprobante
-existente mediante su documento EDI. No se ha ejecutado una prueba integral de
-estos módulos Enterprise ni del cron en la instalación real de ALVIÑA; esta
-revisión de código y plantillas no sustituye esa validación.
+`alvinha_point_of_sale` hereda `PaymentScreenButtons`: se conserva el árbol nativo
+para sus selectores de herencia. Se oculta su opción de facturación en ventas
+positivas peruanas y el botón fiscal se ofrece únicamente en ReceiptScreen.
+
+Ese módulo selecciona diarios con `pos.config._get_journal(partner,
+refunded_order_id)`. Se utiliza ese selector real cuando está disponible, incluido
+el diario de boletas. Sin ese módulo se utiliza `invoice_journal_id`. La preparación,
+el formato EDI y la comprobación del resultado deben usar el mismo diario; la
+versión anterior comprobaba siempre el de facturas.
+
+El cron aportado `cron_generate_auto_invoices()` selecciona pedidos con
+`to_invoice=True` y sin factura. Se conserva esa preferencia cuando ya estaba
+marcada o cuando el método de pago define `auto_invoice`: se desactiva únicamente
+durante el procesamiento inicial que imprimirá el ticket, y se restaura para su
+proceso automático posterior. El frontend no intenta descargar una factura que
+todavía no existe. El botón del recibo puede emitir inmediatamente, sin esperar
+al cron. `_generate_pos_order_invoice` utiliza un bloqueo y recupera el documento
+existente para que el botón y el proceso posterior no creen dos facturas.
+Si el lote ya facturó el ticket, el botón muestra ese documento; no le cambia el
+cliente ni lo sustituye. No se desactiva el proceso nocturno del partner.
+
+El código aportado también utiliza `skip_pe_pos_immediate_send` durante la creación
+de facturas. La emisión solicitada en el recibo procesa después el documento EDI
+en otro RPC. La compatibilidad integral con Enterprise/proveedor y el cron real
+requiere validación en la instalación del partner.
 
 ## JSON.PE
 
@@ -110,9 +121,18 @@ manuales anteriores para contratos adicionales.
 ## Emisión, estados e impresión
 
 Se reutiliza `pos.order.action_pos_order_invoice()` y `_prepare_invoice_vals()`.
-La selección previa se guarda en `pos.order.alvina_document_kind` y se valida en
-el backend antes de preparar la factura. Se utilizan los documentos oficiales
+La identidad y el tipo elegidos al final se guardan en una solicitud única por
+pedido y se validan en el backend antes de preparar la factura. Se utilizan los documentos oficiales
 peruanos 03 y 01. El XML ID de Boleta 03 es `l10n_pe.document_type02`.
+
+Se aplica la selección fiscal del POS de Odoo 19: posición del preset cuando
+corresponde, posición del cliente si está habilitada en la caja, o posición por
+defecto del POS. Comparar solamente la posición automática del contacto provocaba
+el bloqueo «La posición fiscal del cliente no coincide con la venta» incluso
+cuando el ticket utilizaba correctamente la posición por defecto de la caja.
+Si dos posiciones distintas aplican exactamente los mismos impuestos a las líneas,
+se permite identificar al cliente sin cambiar precios ni lo cobrado. Si cambia
+el tratamiento tributario, se detiene la emisión y se explica la diferencia.
 
 Para tickets sin factura previa, preparar/contabilizar y enviar son **dos RPC
 consecutivos**. La factura se guarda primero para que un timeout del proveedor
@@ -139,7 +159,7 @@ conciliaciones necesarios los realiza Odoo. Las devoluciones, cambios de documen
 ya emitido y notas de crédito requieren su flujo oficial.
 
 Los RPC verifican permisos POS, compañía y responsable de sesión/administrador.
-Las vistas previas son de servidor, pertenecen a usuario/sesión/pedido y vencen
+Las vistas previas son de servidor, pertenecen a usuario/pedido y vencen
 en una hora. El navegador no decide el nombre legal a facturar. Solo un
 administrador POS puede autorizar reintentos de fallos de emisión.
 
@@ -153,37 +173,33 @@ python tools/check_addon.py
 python -m compileall -q alvina_pos_comprobantes tools
 ```
 
-Resultado de la verificación local: **24 pruebas puras aprobadas** y **27 pruebas
-ORM aprobadas** en Odoo 19.0 Community (19.0-20261015) con PostgreSQL 16, en una
-base aislada. Se verificaron instalación y actualización, captura de identidad,
-ficha fiscal archivada y reutilizada, tipos 01/03, facturación/conciliación oficial,
-envío con proveedor simulado, no duplicación, rechazo, timeout y descarga del
-comprobante existente. Ninguna prueba envió documentos a SUNAT real.
+Verificación local de 19.0.3.0.0: **37 pruebas ORM aprobadas** en Odoo
+19.0-20261015 con PostgreSQL 16 en una red de contenedores aislada, y **24 pruebas
+puras aprobadas**. También se comprobaron seis escenarios de lógica del frontend
+con servicios simulados y el helper oficial `patch`, y la herencia de las
+plantillas de pago con el XML del partner en ambos órdenes de carga. Esas
+comprobaciones aisladas no equivalen a una prueba visual en navegador.
 
-El modo de pruebas de Odoo sustituye PDF por HTML; la prueba ORM del informe
-verifica los datos fiscales, adjunto y ruta de descarga. Para comprobar el motor
-PDF real se ejecutó además una generación fuera del modo de pruebas con un
-servidor HTTP local: produjo un PDF nativo de 27 971 bytes con encabezado `%PDF`,
-sin proforma de respaldo ni envío externo. El diseño/QR específico de Enterprise
-requiere validación con la localización y proveedor de ALVIÑA.
+Las pruebas de esta versión cubren el ticket pagado sin factura, consulta posterior,
+referencias fiscales internas, tipos 01/03, diario seleccionado por el módulo del
+partner, aplazamiento de la factura inicial, conservación de la cola existente, emisión EDI simulada,
+reimpresión y ausencia de duplicados. Ninguna prueba envía comprobantes reales a
+SUNAT ni consulta JSON.PE con el token del usuario.
 
-Las 24 pruebas puras de identidad/contrato JSON.PE no realizan llamadas reales.
-La suite `alvina_pos_comprobantes/tests/` incluye controles ORM de permisos,
-identidades internas, no duplicación, tipos 01/03 y procesamiento electrónico
-con proveedor **simulado**. Ejecutar con Odoo 19 y PostgreSQL:
+La suite ORM requiere Odoo 19 y PostgreSQL:
 
 ```bash
 odoo -d alvina_test -i alvina_pos_comprobantes --test-enable \
   --test-tags /alvina_pos_comprobantes --stop-after-init --max-cron-threads=0
 ```
 
-Las pruebas locales no acreditan una respuesta de SUNAT ni la compatibilidad con
-un proveedor privado cuyo código no se haya inspeccionado. Verificar en staging
-la interfaz OWL, las cajas reales, el diario/series, el PDF peruano/QR y los estados
-SUNAT/OSE con la localización instalada. Ninguna prueba de este repositorio envía
-comprobantes reales ni modifica producción.
+El modo de pruebas de Odoo sustituye el PDF por HTML: las pruebas ORM comprueban
+sus datos y la ruta de descarga. Una verificación anterior fuera del modo de
+pruebas generó un PDF nativo de 27 971 bytes sin emisión externa. No acredita el
+QR ni la aceptación SUNAT del proveedor instalado. Comprobar en la base de prueba
+del partner el recorrido de caja, impresión física, diarios/series y proveedor.
 
-Las APIs se contrastaron con el código oficial de Odoo 19: `PaymentScreen`,
+Las APIs se contrastaron con el código oficial de Odoo 19: `OrderPaymentValidation`, `PaymentScreen`,
 `PaymentScreenButtons`, `PosOrder.setPartner/setToInvoice`, `pos.order`, `account_edi`
 (`account.move`, `account.edi.document`, `account.edi.format`) y `account.move.send`.
 Licencia: LGPL-3.0.

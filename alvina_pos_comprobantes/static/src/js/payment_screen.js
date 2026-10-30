@@ -1,24 +1,14 @@
 import { patch } from "@web/core/utils/patch";
 import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment_screen";
-import { AlvinaCustomerDialog } from "./customer_dialog";
+import { alvinaReceiptFirst } from "./order_payment_validation";
 
 patch(PaymentScreen.prototype, {
-    alvinaOpenCustomer() {
-        this.dialog.add(AlvinaCustomerDialog, {
-            pos: this.pos,
-            order: this.currentOrder,
-            onConfirmed: () => {
-                if (this.currentOrder.canBeValidated()) {
-                    this.validateOrder();
-                }
-            },
-        });
-    },
-    async validateOrder(...args) {
-        if (this.currentOrder.isToInvoice() && !this.currentOrder.getPartner()) {
-            this.alvinaOpenCustomer();
-            return;
+    setup() {
+        super.setup(...arguments);
+        if (!this.currentOrder.finalized && alvinaReceiptFirst(this.currentOrder)) {
+            // Also enable the native Validate button when an earlier setting
+            // marked the order for invoicing without having selected a customer.
+            this.currentOrder.setToInvoice(false);
         }
-        return super.validateOrder(...args);
     },
 });

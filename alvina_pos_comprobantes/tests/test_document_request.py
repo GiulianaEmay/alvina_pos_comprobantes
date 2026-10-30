@@ -184,3 +184,12 @@ class TestAlvinaDocumentRequest(CommonPosTest):
         order.write({"partner_id": self.dni_partner.id, "alvina_document_kind": "boleta"})
         values = order._prepare_invoice_vals()
         self.assertEqual(values["l10n_latam_document_type_id"], self.env.ref("l10n_pe.document_type02").id)
+
+    def test_receipt_lookup_preserves_ubigeo_for_internal_fiscal_identity(self):
+        order = self.make_order()
+        with patch.object(type(self.company), "_alvina_lookup_external", return_value={
+            "name": "NUEVO CLIENTE", "street": "DIRECCIÓN", "ubigeo_sunat": "150101",
+        }):
+            result = order.alvina_lookup_identity("boleta", "87654321")
+        preview = self.env["alvina.pos.identity"].browse(result["identity_id"])
+        self.assertEqual(preview.ubigeo, "150101")
