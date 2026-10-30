@@ -11,7 +11,7 @@ export class AlvinaDocumentDialog extends Component {
         this.action = useService("action");
         this.state = useState({
             kind: "boleta", number: "", preview: null, status: null,
-            busy: false, error: "", ready: false,
+            busy: false, error: "", warning: "", ready: false,
         });
         onWillUnmount(() => clearTimeout(this.lookupTimer));
         onWillStart(() => this.run(async () => {
@@ -45,7 +45,7 @@ export class AlvinaDocumentDialog extends Component {
         this.state.status = await this.rpc("alvina_document_status");
         this.state.ready = true;
         if (this.state.status.state !== "none") {
-            await this.reloadOrder();
+            await this.reloadOrderQuietly();
         }
     }
 
@@ -55,6 +55,15 @@ export class AlvinaDocumentDialog extends Component {
             "pos.order", "read_pos_orders", [[["id", "=", this.props.order.id]]],
             {}, false, true
         );
+    }
+
+    async reloadOrderQuietly() {
+        this.state.warning = "";
+        try {
+            await this.reloadOrder();
+        } catch {
+            this.state.warning = "El comprobante conserva su estado. No se pudo actualizar la vista del ticket; vuelva a cargar el POS cuando termine.";
+        }
     }
 
     get locked() {
@@ -103,8 +112,13 @@ export class AlvinaDocumentDialog extends Component {
             }
             this.state.status = await this.rpc("alvina_submit_document", [preview.identity_id]);
             this.state.preview = null;
-            await this.reloadOrder();
-            await this.sendAndPrint();
+            try {
+                await this.sendAndPrint();
+            } finally {
+                // A view/cache refresh is secondary: it must never prevent the
+                // provider call after the fiscal invoice was already committed.
+                await this.reloadOrderQuietly();
+            }
         });
     }
 

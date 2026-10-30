@@ -1,6 +1,6 @@
 # ALVIÑA POS — Boleta/Factura para Odoo 19
 
-**Versión 19.0.3.0.0.** Ticket de atención primero y emisión fiscal al final del
+**Versión 19.0.3.0.1.** Ticket de atención primero y emisión fiscal al final del
 cobro. El addon instalable está dentro de `alvina_pos_comprobantes/`.
 
 ## Flujo de caja
@@ -141,6 +141,18 @@ no elimine su número y produzca otra factura al reintentar. El segundo RPC usa
 el formato del comprobante. Un resultado ambiguo conserva la factura y bloquea
 el reenvío automático; debe verificarse ese mismo número en Contabilidad/proveedor.
 
+El envío exige que el formato esté habilitado en el diario, utilice servicios web
+y exponga un callback `post` válido. Se evita que el motor genérico de EDI
+considere enviado un formato sin función de envío. El segundo RPC desactiva
+explícitamente el contexto `skip_pe_pos_immediate_send` que el módulo del partner
+utiliza durante la creación. La recarga visual del ticket se realiza después del
+envío/descarga: si falla, muestra una advertencia y conserva el estado de emisión.
+La contención de un bloqueo de otro proceso se detecta antes de contactar al
+proveedor. Si una excepción deja incierto el resultado del envío, se conserva la
+factura y se bloquea también su documento EDI para que el cron oficial no lo
+reenvíe automáticamente. Contabilidad debe verificar ese mismo número antes de
+autorizar el reintento mediante el procedimiento oficial de Odoo.
+
 El diálogo distingue preparación, pendiente de envío, enviado, error electrónico,
 resultado desconocido y anulación. Nunca equipara una factura meramente
 contabilizada a un envío exitoso. **Enviado** refleja `account.edi.document.state
@@ -169,13 +181,15 @@ Pruebas sin Odoo:
 
 ```bash
 python -m unittest discover -s tools -p 'test_*.py' -v
+node --test tools/test_document_dialog.mjs
 python tools/check_addon.py
 python -m compileall -q alvina_pos_comprobantes tools
 ```
 
-Verificación local de 19.0.3.0.0: **37 pruebas ORM aprobadas** en Odoo
+Verificación local de 19.0.3.0.1: **40 pruebas ORM aprobadas** en Odoo
 19.0-20261015 con PostgreSQL 16 en una red de contenedores aislada, y **24 pruebas
-puras aprobadas**. También se comprobaron seis escenarios de lógica del frontend
+puras aprobadas**. La suite Node ejecuta **7 pruebas de la ventana de emisión**,
+incluido el fallo de recarga visual después de emitir. También se comprobaron seis escenarios de lógica del frontend
 con servicios simulados y el helper oficial `patch`, y la herencia de las
 plantillas de pago con el XML del partner en ambos órdenes de carga. Esas
 comprobaciones aisladas no equivalen a una prueba visual en navegador.
@@ -185,6 +199,11 @@ referencias fiscales internas, tipos 01/03, diario seleccionado por el módulo d
 partner, aplazamiento de la factura inicial, conservación de la cola existente, emisión EDI simulada,
 reimpresión y ausencia de duplicados. Ninguna prueba envía comprobantes reales a
 SUNAT ni consulta JSON.PE con el token del usuario.
+
+Las regresiones adicionales exigen un emisor ejecutable (sin marcar como enviado
+un formato sin callback), comprueban que el contexto de creación no omita la
+llamada interactiva y que el cron oficial no reenvíe un resultado incierto. Un
+bloqueo por otro proceso no se confunde con un envío de resultado desconocido.
 
 La suite ORM requiere Odoo 19 y PostgreSQL:
 

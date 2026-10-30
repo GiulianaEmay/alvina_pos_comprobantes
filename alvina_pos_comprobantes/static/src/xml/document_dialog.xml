@@ -4,6 +4,7 @@
         <Dialog title="'Boleta/Factura'">
             <div class="d-flex flex-column gap-3" t-att-aria-busy="state.busy ? 'true' : 'false'">
                 <div t-if="state.error" class="alert alert-danger" role="alert" t-esc="state.error"/>
+                <div t-if="state.warning" class="alert alert-warning" role="status" t-esc="state.warning"/>
                 <t t-if="!locked">
                     <label for="alvina-kind">Tipo de comprobante</label>
                     <div class="text-muted">El ticket de atención ya está pagado. Aquí emite su boleta o factura.</div>

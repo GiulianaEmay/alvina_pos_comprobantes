@@ -1,6 +1,6 @@
 {
     "name": "ALVIÑA POS — Boleta / Factura",
-    "version": "19.0.3.0.0",
+    "version": "19.0.3.0.1",
     "category": "Sales/Point of Sale",
     "license": "LGPL-3",
     "depends": ["point_of_sale", "l10n_pe", "account_edi"],

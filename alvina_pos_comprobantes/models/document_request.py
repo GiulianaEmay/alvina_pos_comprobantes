@@ -3,7 +3,7 @@ import logging
 from psycopg2 import OperationalError
 
 from odoo import fields, models, _
-from odoo.exceptions import UserError
+from odoo.exceptions import LockError, UserError
 from odoo.tools import html2plaintext
 
 from .identity import validate_identity
@@ -152,6 +152,15 @@ class AlvinaPosDocumentRequest(models.Model):
         documents = self._edi_document()
         if len(documents) != 1:
             raise UserError(_("El comprobante no tiene un documento electrónico compatible. Revíselo en Contabilidad."))
+        try:
+            # Same lock order as the official EDI engine. Resolve contention
+            # before entering the block in which a provider may be contacted.
+            documents.lock_for_update()
+            self.invoice_id.lock_for_update()
+            documents.attachment_id.filtered(lambda attachment: not attachment.res_model and not attachment.res_id).lock_for_update()
+        except LockError:
+            raise UserError(_("Otro proceso está enviando este comprobante. Actualice su estado antes de volver a intentarlo.")) from None
+        documents.invalidate_recordset(["state", "error", "blocking_level"])
         if documents.state == "sent":
             return self._status_payload()
         if documents.state != "to_send":
@@ -163,6 +172,22 @@ class AlvinaPosDocumentRequest(models.Model):
             ))
         if documents.error and not retry:
             return self._status_payload()
+        edi_format = documents.edi_format_id
+        applicability = edi_format._get_move_applicability(self.invoice_id)
+        # Odoo's generic EDI engine treats a missing callback as a successful
+        # no-op. A fiscal receipt must have an actual web-service sender.
+        if (edi_format not in self.invoice_id.journal_id.edi_format_ids
+                or not edi_format._needs_web_services()
+                or not isinstance(applicability, dict) or not callable(applicability.get("post"))):
+            message = _(
+                "El formato electrónico del comprobante no tiene un envío web válido habilitado en su diario. "
+                "Revise la configuración del proveedor en Contabilidad. Esta operación no realizó el envío; el comprobante conserva su número."
+            )
+            # Persist a known configuration failure, including the official cron
+            # exclusion. Raising here would roll that protection back in the RPC.
+            documents.write({"blocking_level": "error", "error": message})
+            self.error_message = message
+            return self._status_payload()
         if retry:
             # Official retry reset; never delete/recreate the fiscal document.
             self.invoice_id._retry_edi_documents_error()
@@ -172,15 +197,19 @@ class AlvinaPosDocumentRequest(models.Model):
             with self.env.cr.savepoint():
                 # Verified Odoo 19 API. Restrict processing to the selected format
                 # and do not allow it to commit unrelated work.
-                documents._process_documents_web_services(with_commit=False)
+                documents.with_context(skip_pe_pos_immediate_send=False)._process_documents_web_services(with_commit=False)
         except OperationalError:
             raise
         except Exception:
             _logger.error("ALVIÑA: unconfirmed EDI result for request id=%s", self.id)
-            self.write({"send_uncertain": True, "error_message": _(
+            message = _(
                 "No se confirmó la respuesta del proveedor electrónico. El comprobante conserva "
                 "su número; actualice el estado o revíselo en Contabilidad antes de reenviar."
-            )})
+            )
+            self.write({"send_uncertain": True, "error_message": message})
+            # The official cron does not inspect our request model. Its own
+            # blocking flag must also prevent an automatic ambiguous resend.
+            documents.write({"blocking_level": "error", "error": message})
         return self._status_payload()
 
     def _status_payload(self):

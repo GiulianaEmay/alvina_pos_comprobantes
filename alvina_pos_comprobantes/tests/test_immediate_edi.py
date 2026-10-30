@@ -2,7 +2,7 @@
 from unittest.mock import patch
 
 from odoo import Command
-from odoo.exceptions import UserError
+from odoo.exceptions import LockError, UserError
 from odoo.tests import tagged
 from odoo.addons.point_of_sale.tests.common import CommonPosTest
 
@@ -107,6 +107,18 @@ class TestAlvinaImmediateEdi(CommonPosTest):
         self.assertEqual(self.env["account.move"].search_count([]), before_invoices)
         self.assertEqual(self.env["pos.payment"].search_count([]), before_payments)
 
+    def test_busy_edi_document_is_not_misreported_as_an_uncertain_send(self):
+        order = self.invoiced_order()
+        documents = order.account_move.edi_document_ids
+        with patch.object(type(documents), "lock_for_update", side_effect=LockError("Simulated contention")):
+            with self.assertRaisesRegex(UserError, "Otro proceso"):
+                order.alvina_send_document()
+        self.assertFalse(order._alvina_request().send_uncertain)
+        self.assertEqual(order._alvina_request().send_attempts, 0)
+        self.assertEqual(documents.state, "to_send")
+        self.assertFalse(documents.blocking_level)
+        self.assertFalse(self.sent)
+
     def test_rejected_provider_does_not_enable_print(self):
         order = self.invoiced_order()
         self.provider_error = True
@@ -115,6 +127,39 @@ class TestAlvinaImmediateEdi(CommonPosTest):
         self.assertFalse(result["can_print"])
         self.assertEqual(order.account_move.state, "posted")
         self.assertIn("Rechazo", result["message"])
+
+    def test_missing_or_invalid_sender_cannot_be_reported_as_emitted(self):
+        order = self.invoiced_order()
+        invoice = order.account_move
+        for applicability in ({}, {"post": True}):
+            with self.subTest(applicability=applicability):
+                with patch.object(type(self.format), "_get_move_applicability", return_value=applicability):
+                    invoice._retry_edi_documents_error()
+                    result = order.alvina_send_document()
+                    self.assertEqual(result["state"], "edi_error")
+                    self.assertIn("envío web válido", result["message"])
+                    self.env["account.edi.document"]._cron_process_documents_web_services()
+                self.assertEqual(order.account_move, invoice)
+                self.assertEqual(invoice.edi_document_ids.state, "to_send")
+                self.assertEqual(invoice.edi_document_ids.blocking_level, "error")
+                self.assertFalse(order.alvina_document_status()["can_print"])
+                self.assertFalse(self.sent)
+
+    def test_explicit_send_does_not_inherit_the_creation_skip_context(self):
+        order = self.invoiced_order()
+        documents = order.account_move.edi_document_ids
+        original = type(documents)._process_documents_web_services
+
+        def partner_sender(records, with_commit=True, job_count=None):
+            # Same context contract as the supplied alvinha_point_of_sale hook.
+            if records.env.context.get("skip_pe_pos_immediate_send"):
+                return
+            return original(records, with_commit=with_commit, job_count=job_count)
+
+        with patch.object(type(documents), "_process_documents_web_services", partner_sender):
+            result = order.with_context(skip_pe_pos_immediate_send=True).alvina_send_document()
+        self.assertEqual(result["state"], "sent")
+        self.assertEqual(self.sent, order.account_move.ids)
 
     def test_uncertain_result_preserves_invoice_and_disables_resend(self):
         order = self.invoiced_order()
@@ -126,6 +171,11 @@ class TestAlvinaImmediateEdi(CommonPosTest):
         self.assertFalse(result["can_send"])
         self.assertEqual(order.account_move, invoice)
         self.assertEqual(invoice.state, "posted")
+        self.assertEqual(invoice.edi_document_ids.blocking_level, "error")
+        self.provider_exception = False
+        self.env["account.edi.document"]._cron_process_documents_web_services()
+        self.assertEqual(self.sent, invoice.ids, "The official cron must not automatically retry the uncertain send")
+        self.assertEqual(invoice.edi_document_ids.state, "to_send")
 
     def test_no_pdf_download_before_electronic_send(self):
         from odoo.exceptions import UserError
